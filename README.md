@@ -1,8 +1,8 @@
 # Paperclip OMP Adapter
 
 [![CI](https://github.com/tickernelz/paperclip-omp-adapter/actions/workflows/ci.yml/badge.svg)](https://github.com/tickernelz/paperclip-omp-adapter/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/paperclip-omp-adapter.svg)](https://www.npmjs.com/package/paperclip-omp-adapter)
-[![license](https://img.shields.io/npm/l/paperclip-omp-adapter.svg)](LICENSE)
+[![npm](https://img.shields.io/npm/v/%40zhafron%2Fpaperclip-omp-adapter.svg)](https://www.npmjs.com/package/@zhafron/paperclip-omp-adapter)
+[![license](https://img.shields.io/npm/l/%40zhafron%2Fpaperclip-omp-adapter.svg)](LICENSE)
 
 Run [Oh My Pi](https://github.com/can1357/oh-my-pi) as a first-class external adapter in [Paperclip](https://github.com/paperclipai/paperclip)—with native model discovery, custom providers, resumable local sessions, skills, tools, and structured transcripts.
 
@@ -28,7 +28,7 @@ npm install -g @oh-my-pi/pi-coding-agent@17.0.5
 Install the adapter in Paperclip:
 
 ```text
-Settings → Adapters → Install from npm → paperclip-omp-adapter
+Settings → Adapters → Install from npm → @zhafron/paperclip-omp-adapter
 ```
 
 Or through the API:
@@ -36,7 +36,7 @@ Or through the API:
 ```sh
 curl -X POST http://localhost:3102/api/adapters \
   -H 'Content-Type: application/json' \
-  -d '{"packageName":"paperclip-omp-adapter"}'
+  -d '{"packageName":"@zhafron/paperclip-omp-adapter"}'
 ```
 
 Create an agent with adapter type `omp_local`, then select an OMP model such as `provider/model` or a role alias such as `@smol`. Leaving tool and skill allowlists empty preserves OMP's complete defaults.
