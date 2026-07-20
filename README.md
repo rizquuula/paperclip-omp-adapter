@@ -25,19 +25,13 @@ Requirements: Node.js 22+, Paperclip with external-adapter support, and OMP inst
 npm install -g @oh-my-pi/pi-coding-agent@17.0.5
 ```
 
-Install the adapter in Paperclip:
-
-```text
-Settings → Adapters → Install from npm → @zhafron/paperclip-omp-adapter
-```
-
-Or through the API:
+Install the published adapter with the Paperclip CLI:
 
 ```sh
-curl -X POST http://localhost:3102/api/adapters \
-  -H 'Content-Type: application/json' \
-  -d '{"packageName":"@zhafron/paperclip-omp-adapter"}'
+npx paperclipai adapter install --payload-json '{"packageName":"@zhafron/paperclip-omp-adapter","version":"0.1.0"}'
 ```
+
+You can also use **Settings → Adapters → Install from npm** and enter `@zhafron/paperclip-omp-adapter`.
 
 Create an agent with adapter type `omp_local`, then select an OMP model such as `provider/model` or a role alias such as `@smol`. Leaving tool and skill allowlists empty preserves OMP's complete defaults.
 
