@@ -28,7 +28,7 @@ npm install -g @oh-my-pi/pi-coding-agent@17.0.5
 Install the published adapter with the Paperclip CLI:
 
 ```sh
-npx paperclipai adapter install --payload-json '{"packageName":"@zhafron/paperclip-omp-adapter","version":"0.1.0"}'
+npx paperclipai adapter install --payload-json '{"packageName":"@zhafron/paperclip-omp-adapter","version":"0.1.1"}'
 ```
 
 You can also use **Settings → Adapters → Install from npm** and enter `@zhafron/paperclip-omp-adapter`.
