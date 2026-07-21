@@ -18,6 +18,46 @@ assert.equal(adapter.supportsInstructionsBundle, true);
 assert(adapter.listModels && adapter.refreshModels && adapter.detectModel);
 assert(adapter.listSkills && adapter.syncSkills && adapter.getConfigSchema);
 
+const uiParserSource = await fs.readFile(new URL("../dist/ui-parser.js", import.meta.url), "utf8");
+const uiParserExports = {};
+const uiParserModule = { exports: uiParserExports };
+new Function("exports", "module", "self", "globalThis", uiParserSource)(
+  uiParserExports,
+  uiParserModule,
+  undefined,
+  undefined,
+);
+const parseStdoutLine = uiParserModule.exports.parseStdoutLine;
+const transcriptTs = "2026-07-20T23:52:22Z";
+assert.deepEqual(
+  parseStdoutLine(JSON.stringify({
+    type: "thinking_level_changed",
+    thinkingLevel: "high",
+    configured: "auto",
+    resolved: "high",
+  }), transcriptTs),
+  [{ kind: "system", ts: transcriptTs, text: "OMP thinking level: high" }],
+);
+for (const event of [
+  { type: "turn_start" },
+  {
+    type: "message_update",
+    assistantMessageEvent: { type: "toolcall_delta", contentIndex: 1, delta: " concise" },
+  },
+  {
+    type: "tool_execution_update",
+    toolCallId: "call-1",
+    toolName: "read",
+    partialResult: { content: [] },
+  },
+]) {
+  assert.deepEqual(parseStdoutLine(JSON.stringify(event), transcriptTs), []);
+}
+assert.deepEqual(
+  parseStdoutLine(JSON.stringify({ type: "future_omp_event" }), transcriptTs),
+  [{ kind: "stdout", ts: transcriptTs, text: '{"type":"future_omp_event"}' }],
+);
+
 const schema = await adapter.getConfigSchema();
 const schemaKeys = new Set(schema.fields.map((field) => field.key));
 for (const key of ["model", "profile", "agentDir", "modelsYaml", "tools", "extensions", "pluginDirs", "configFiles"]) {

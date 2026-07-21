@@ -176,6 +176,11 @@ function parseStdoutLine(line, ts) {
       return [{ kind: "init", ts, model, sessionId }];
     }
 
+    if (type === "thinking_level_changed") {
+      const level = asString(parsed.thinkingLevel) || asString(parsed.resolved);
+      return level ? [{ kind: "system", ts, text: `OMP thinking level: ${level}` }] : [];
+    }
+
     if (type === "session_start") {
       return [{ kind: "system", ts, text: "OMP session started" }];
     }
@@ -315,9 +320,7 @@ function parseStdoutLine(line, ts) {
       return [{ kind: "system", ts, text: "OMP session stopped" }];
     }
 
-    if (type === "turn_start") {
-      return typeof parsed.turnIndex === "number" ? [] : raw();
-    }
+    if (type === "turn_start") return [];
     if (type === "message_start") return asRecord(parsed.message) ? [] : raw();
     if (type === "tool_execution_update") {
       return asString(parsed.toolCallId)
