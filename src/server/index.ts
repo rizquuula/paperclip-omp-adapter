@@ -68,6 +68,25 @@ function getRuntimeCommandSpec(config: Record<string, unknown>): AdapterRuntimeC
 }
 
 export function createServerAdapter(): ServerAdapterModule {
+  const advertisedModels = [...models];
+  const listModels = async () => {
+    const discovered = await listOmpModels();
+    advertisedModels.length = 0;
+    advertisedModels.push(...discovered);
+    return discovered;
+  };
+  const refreshModels = async () => {
+    const discovered = await refreshOmpModels();
+    advertisedModels.length = 0;
+    advertisedModels.push(...discovered);
+    return discovered;
+  };
+
+  // Paperclip's adapter summary currently counts only `models`, while its picker
+  // correctly calls `listModels`. Populate the shared summary asynchronously so
+  // startup stays non-blocking and both views converge on OMP's live catalog.
+  void listModels();
+
   return {
     type,
     execute,
@@ -76,9 +95,9 @@ export function createServerAdapter(): ServerAdapterModule {
     sessionManagement,
     listSkills: listOmpSkills,
     syncSkills: syncOmpSkills,
-    models,
-    listModels: listOmpModels,
-    refreshModels: refreshOmpModels,
+    models: advertisedModels,
+    listModels,
+    refreshModels,
     modelProfiles: [
       {
         key: "cheap",

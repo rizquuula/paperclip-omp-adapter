@@ -150,6 +150,10 @@ for (const baseUrl of [
 const fakeOmp = path.join(root, "fake-omp.mjs");
 await fs.writeFile(fakeOmp, `#!/usr/bin/env node
 const args = process.argv.slice(2);
+if (args[0] === "models") {
+  console.log(JSON.stringify({ models: [{ provider: "fake-provider", id: "fake-model", selector: "fake-provider/fake-model", name: "Fake model" }] }));
+  process.exit(0);
+}
 const resumeIndex = args.indexOf("--resume");
 const noSession = args.includes("--no-session");
 const sessionId = resumeIndex >= 0 ? args[resumeIndex + 1] : "fake-session-1";
@@ -175,6 +179,13 @@ console.log(JSON.stringify({ type: "message_end", message }));
 console.log(JSON.stringify({ type: "turn_end", message }));
 `);
 await fs.chmod(fakeOmp, 0o755);
+const previousOmpCommand = process.env.PAPERCLIP_OMP_COMMAND;
+process.env.PAPERCLIP_OMP_COMMAND = fakeOmp;
+const advertisedAdapter = createServerAdapter();
+assert.equal((await advertisedAdapter.listModels()).length, 1);
+assert.equal(advertisedAdapter.models.length, 1, "dynamic model discovery must update the static model summary");
+if (previousOmpCommand === undefined) delete process.env.PAPERCLIP_OMP_COMMAND;
+else process.env.PAPERCLIP_OMP_COMMAND = previousOmpCommand;
 
 const executionCwd = path.join(root, "workspace");
 await fs.mkdir(executionCwd);
