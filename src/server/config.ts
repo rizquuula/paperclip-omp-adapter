@@ -301,6 +301,14 @@ export async function getConfigSchema(): Promise<AdapterConfigSchema> {
       roleField("slowModel", "Slow/reasoning model", "Optional selector passed to OMP --slow for difficult auxiliary work."),
       roleField("planModel", "Planning model", "Optional selector passed to OMP --plan."),
       {
+        key: "thinking",
+        label: "OMP thinking override",
+        type: "select",
+        options: ["auto", "off", "minimal", "low", "medium", "high", "xhigh", "max"].map((value) => ({ value, label: value })),
+        hint: "Full OMP thinking level. Overrides the top-level Paperclip effort setting.",
+        group: "Models",
+      },
+      {
         key: "modelCycle",
         label: "Model cycle allowlist",
         type: "text",

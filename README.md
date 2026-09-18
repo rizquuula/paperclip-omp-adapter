@@ -43,7 +43,7 @@ npm install -g @oh-my-pi/pi-coding-agent@latest
 In a running Paperclip instance, install the adapter using the official package:
 
 ```bash
-paperclipai adapter install --payload-json '{"packageName":"@zhafron/paperclip-omp-adapter","version":"0.2.2"}' --json
+paperclipai adapter install --payload-json '{"packageName":"@zhafron/paperclip-omp-adapter","version":"0.2.3"}' --json
 ```
 
 To upgrade an existing installation:
@@ -120,7 +120,7 @@ Pack the local repository and install the tarball directly into your Paperclip i
 
 ```bash
 TARBALL=$(npm pack)
-paperclipai adapter install --payload-json "{\"packageName\":\"$PWD/$TARBALL\",\"version\":\"0.2.2\"}" --json
+paperclipai adapter install --payload-json "{\"packageName\":\"$PWD/$TARBALL\",\"version\":\"0.2.3\"}" --json
 ```
 
 ## License
