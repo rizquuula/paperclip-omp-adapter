@@ -307,14 +307,7 @@ export async function getConfigSchema(): Promise<AdapterConfigSchema> {
         hint: "Optional comma-separated selectors passed to OMP --models.",
         group: "Models",
       },
-      {
-        key: "thinking",
-        label: "Thinking effort",
-        type: "select",
-        options: ["auto", "off", "minimal", "low", "medium", "high", "xhigh", "max"].map((value) => ({ value, label: value })),
-        hint: "OMP --thinking effort. Leave unset to use the model/config default.",
-        group: "Models",
-      },
+
       {
         key: "modelsYaml",
         label: "Isolated models.yml",

@@ -200,7 +200,7 @@ function buildOmpArgs(input: {
   if (baseSystemPrompt) args.push("--system-prompt", baseSystemPrompt);
   args.push("--append-system-prompt", input.systemPrompt);
   const model = asString(config.model, "").trim();
-  const thinking = (asString(config.thinking, "") || asString(config.thinkingEffort, "")).trim();
+  const thinking = (asString(config.thinking, "") || asString(config.thinkingEffort, "") || asString(config.effort, "")).trim();
   const profile = input.effectiveProfile ?? "";
   const smol = asString(config.smolModel, "").trim();
   const slow = asString(config.slowModel, "").trim();
