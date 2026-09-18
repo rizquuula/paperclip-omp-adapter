@@ -4,74 +4,126 @@
 [![npm](https://img.shields.io/npm/v/%40zhafron%2Fpaperclip-omp-adapter.svg)](https://www.npmjs.com/package/@zhafron/paperclip-omp-adapter)
 [![license](https://img.shields.io/npm/l/%40zhafron%2Fpaperclip-omp-adapter.svg)](LICENSE)
 
-Run [Oh My Pi](https://github.com/can1357/oh-my-pi) as a first-class external adapter in [Paperclip](https://github.com/paperclipai/paperclip)—with native model discovery, custom providers, resumable local sessions, skills, tools, and structured transcripts.
+External Paperclip adapter for running Oh My Pi (OMP) CLI in headless mode with native model discovery, custom providers, resumable local sessions, skills synchronization, multi-workspace support, and structured transcripts.
 
-## What it maps
+## Overview
 
-| OMP capability | Paperclip behavior |
-|---|---|
-| Built-in, fetched, local, and custom models | Native `omp models --json` discovery and refresh |
-| Custom providers and `models.yml` | Schema-driven config with environment-bound credentials |
-| Tools, skills, rules, hooks, extensions, LSP, PTY | Direct OMP CLI flag mapping |
-| JSONL sessions and tool events | Structured Paperclip transcript entries |
-| Local session state | Exact session resume across heartbeats |
-| SSH and sandbox targets | Workspace and sanitized runtime-asset staging |
+This adapter integrates OMP into Paperclip as an external adapter module (`omp_local`). It communicates with the host Paperclip instance via the `@paperclipai/adapter-utils` contract and parses OMP's non-interactive JSONL event stream into Paperclip transcript entries.
 
-## Quick start
+## Feature Matrix
 
-Requirements: Node.js 22+, Paperclip with external-adapter support, and OMP installed and authenticated in the execution environment.
+| Feature | Paperclip Integration | OMP CLI Mapping |
+|---|---|---|
+| Model Discovery | Dynamic model list and badge updates | `omp models --json` and `omp models refresh --json` |
+| Execution Mode | Headless execution per heartbeat run | `omp --mode json -p` |
+| Session Resume | Resumes conversation across runs | `--session-dir <dir> --resume <id>` |
+| Multi-Workspace | Multi-workspace context synchronization | `--add-dir <path>` (repeatable) |
+| Thinking / Reasoning | Live transcript streaming | `--thinking <level>`, `--print-thoughts` |
+| Tool Events | Real-time tool calls and progress updates | Maps `tool_execution_*` to Paperclip entries |
+| Skills Integration | Paperclip workspace skills synchronization | Links skills into `~/.omp/agent/skills` |
+| Cancellation | Host-driven run abortion | Listens to `ctx.signal` and signals process group |
+| Targets | Local and remote execution | Direct spawn, SSH, or managed sandboxes |
 
-```sh
-npm install -g @oh-my-pi/pi-coding-agent@17.0.5
+## Requirements
+
+- Node.js >= 24.11.0
+- Paperclip >= 2026.916.0
+- Oh My Pi (OMP) installed in the environment (`omp` executable available in `PATH` or explicitly configured via `command`)
+
+Install OMP globally:
+
+```bash
+npm install -g @oh-my-pi/pi-coding-agent@latest
 ```
 
-Install the published adapter with the Paperclip CLI:
+## Installation
 
-```sh
-npx paperclipai adapter install --payload-json '{"packageName":"@zhafron/paperclip-omp-adapter","version":"0.1.2"}'
+### Via Paperclip CLI
+
+In a running Paperclip instance, install the adapter using the official package:
+
+```bash
+paperclipai adapter install --payload-json '{"packageName":"@zhafron/paperclip-omp-adapter","version":"0.2.0"}' --json
 ```
 
-You can also use **Settings → Adapters → Install from npm** and enter `@zhafron/paperclip-omp-adapter`.
+To upgrade an existing installation:
 
-Create an agent with adapter type `omp_local`, then select an OMP model such as `provider/model` or a role alias such as `@smol`. Leaving tool and skill allowlists empty preserves OMP's complete defaults.
-
-## Custom provider
-
-Bind the credential in Paperclip's environment/secrets configuration, then reference only its environment variable name:
-
-```yaml
-providers:
-  my-gateway:
-    baseUrl: https://gateway.example.com/v1
-    api: openai-completions
-    apiKey: MY_GATEWAY_API_KEY
-    models:
-      - id: my-model
-        name: My Model
-        contextWindow: 128000
-        maxTokens: 8192
+```bash
+paperclipai adapter reinstall omp_local --json
 ```
 
-Paste that into the adapter's **Isolated models.yml** field and select `my-gateway/my-model`.
+### Verification
 
-## Safety and remote behavior
+Check that the adapter is registered and loaded:
 
-- Inline and materialized YAML is parsed structurally; literal credentials and credential-bearing URLs are rejected.
-- Auth databases are never copied to remote targets. Use Paperclip secret bindings.
-- Remote config, extension, hook, and plugin paths must live inside the synchronized workspace.
-- Local sessions resume exactly. Remote sessions are ephemeral because Paperclip remote runtime directories are per run.
-- Paperclip-owned identity and workspace environment values cannot be overridden by agent config.
+```bash
+paperclipai adapter get omp_local --json
+```
+
+Verify model discovery for a company:
+
+```bash
+paperclipai adapter models omp_local --company-id <company-id> --json
+```
+
+## Configuration Reference
+
+The adapter exposes the following configuration schema fields under an agent's adapter configuration:
+
+### Core Execution
+- `command` (string): Path to the OMP executable. Default: `omp`.
+- `model` (string): Default model selector (e.g., `anthropic/claude-3-7-sonnet`, `openai/gpt-4o`).
+- `thinking` (string): Reasoning level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `auto`).
+- `printThoughts` (boolean): Whether to pass `--print-thoughts` or `--hide-thinking`.
+- `profile` (string): Named OMP profile to activate (`OMP_PROFILE`).
+
+### Workspace & Sessions
+- `cwd` (string): Working directory override. Defaults to the Paperclip issue workspace.
+- `addDirs` (textarea): Additional directory paths passed via repeatable `--add-dir` flags.
+- `sessionDir` (string): Directory for storing OMP session state.
+- `noSession` (boolean): Set true to disable session resumption (ephemeral execution).
+- `allowHome` (boolean): Pass `--allow-home` if working directly in the user home directory.
+
+### Capabilities & Tools
+- `tools` (string): Comma-separated list of enabled tool names.
+- `noTools` (boolean): Disable default OMP tools.
+- `skills` (string): Comma-separated list of explicit skill names to enable.
+- `noSkills` (boolean): Disable built-in skills discovery.
+- `noRules` (boolean): Skip loading `RULES.md`.
+- `approvalMode` (select): Tool execution approval policy (`yolo`, `write`, `always-ask`). Default: `yolo`.
+- `autoApprove` (boolean): Legacy tool auto-approval toggle.
+
+### Diagnostics & Extensions
+- `timeoutSec` (number): Maximum wall-clock execution time in seconds before SIGINT.
+- `graceSec` (number): Grace period before SIGKILL after SIGINT.
+- `configFiles` (textarea): Custom `config.yml` overlay paths.
+- `extensions` (textarea): Paths to custom OMP extensions.
+- `pluginDirs` (textarea): Paths to plugin directories.
+- `hooks` (textarea): Paths to hook files.
+- `extraArgs` (textarea): Raw additional flags passed to the OMP CLI.
 
 ## Development
 
-```sh
+### Building and Testing
+
+```bash
+git clone https://github.com/tickernelz/paperclip-omp-adapter.git
+cd paperclip-omp-adapter
 npm install
+npm run typecheck
 npm test
-npm pack --dry-run
 ```
 
-Tag a version such as `v0.1.0` to run the npm publish workflow and create a GitHub Release. The workflow expects an `NPM_TOKEN` repository secret.
+### Testing Local Package in Paperclip
+
+Pack the local repository and install the tarball directly into your Paperclip instance:
+
+```bash
+TARBALL=$(npm pack)
+paperclipai adapter install --payload-json "{\"packageName\":\"$PWD/$TARBALL\",\"version\":\"0.2.0\"}" --json
+```
 
 ## License
 
 MIT
+

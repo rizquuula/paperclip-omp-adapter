@@ -420,6 +420,21 @@ export async function getConfigSchema(): Promise<AdapterConfigSchema> {
         group: "Capabilities",
       },
       {
+        key: "printThoughts",
+        label: "Print thinking thoughts",
+        type: "toggle",
+        default: false,
+        hint: "Pass --print-thoughts when true, or --hide-thinking when explicitly false.",
+        group: "Capabilities",
+      },
+      {
+        key: "addDirs",
+        label: "Secondary workspaces",
+        type: "textarea",
+        hint: "One workspace root path per line passed to OMP via --add-dir.",
+        group: "Runtime",
+      },
+      {
         key: "tools",
         label: "Tool allowlist",
         type: "text",

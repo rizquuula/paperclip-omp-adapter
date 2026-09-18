@@ -185,6 +185,8 @@ function addWakeEnvironment(
 
 function buildOmpArgs(input: {
   config: Record<string, unknown>;
+  context?: Record<string, unknown>;
+  cwd?: string;
   systemPrompt: string;
   userPrompt: string;
   sessionDir: string;
@@ -210,6 +212,11 @@ function buildOmpArgs(input: {
   const noSession = asBoolean(config.noSession, false);
 
   if (model) args.push("--model", model);
+  if (config.printThoughts === true) {
+    args.push("--print-thoughts");
+  } else if (config.printThoughts === false) {
+    args.push("--hide-thinking");
+  }
   if (thinking) args.push("--thinking", thinking);
   if (profile && !input.omitProfile) args.push("--profile", profile);
   if (smol) args.push("--smol", smol);
@@ -262,6 +269,30 @@ function buildOmpArgs(input: {
   } else {
     args.push("--session-dir", input.sessionDir);
     if (input.resumeSessionId) args.push("--resume", input.resumeSessionId);
+  }
+
+  const primaryCwd = input.cwd ? path.resolve(input.cwd) : "";
+  const addedDirs = new Set<string>();
+  for (const dir of stringList(config.addDirs)) {
+    const resolved = path.resolve(dir);
+    if (resolved && resolved !== primaryCwd && !addedDirs.has(resolved)) {
+      addedDirs.add(resolved);
+      args.push("--add-dir=" + resolved);
+    }
+  }
+  if (input.context && Array.isArray(input.context.paperclipWorkspaces)) {
+    for (const ws of input.context.paperclipWorkspaces) {
+      if (ws && typeof ws === "object" && !Array.isArray(ws)) {
+        const wsCwd = asString((ws as Record<string, unknown>).cwd, "").trim();
+        if (wsCwd) {
+          const resolved = path.resolve(wsCwd);
+          if (resolved && resolved !== primaryCwd && !addedDirs.has(resolved)) {
+            addedDirs.add(resolved);
+            args.push("--add-dir=" + resolved);
+          }
+        }
+      }
+    }
   }
   args.push(...stringList(config.extraArgs));
   args.push(input.userPrompt);
@@ -581,6 +612,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     const runAttempt = async (resumeSessionId: string | null): Promise<ProcessAttempt> => {
       const args = buildOmpArgs({
         config: executionConfig,
+        context,
+        cwd,
         systemPrompt: prompts.systemPrompt,
         userPrompt: prompts.userPrompt,
         sessionDir,
@@ -623,16 +656,59 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         }
       };
 
-      const proc = await runAdapterExecutionTargetProcess(runId, runtimeTarget, command, args, {
-        cwd,
-        env: invocationEnv,
-        timeoutSec,
-        graceSec,
-        onSpawn,
-        onRuntimeProgress: ctx.onRuntimeProgress,
-        onLog: bufferedOnLog,
-        runLogTail: paperclipBridge?.runLogTail,
-      });
+      let spawnedPgid: number | null = null;
+      let spawnedPid: number | null = null;
+      let abortHandler: (() => void) | null = null;
+
+      const handleSpawn = async (meta: { pid: number; processGroupId: number | null; startedAt: string }) => {
+        spawnedPid = meta.pid;
+        spawnedPgid = meta.processGroupId;
+        if (onSpawn) await onSpawn(meta);
+        if (ctx.signal?.aborted) {
+          triggerProcessAbort();
+        }
+      };
+
+      const triggerProcessAbort = () => {
+        try {
+          if (spawnedPgid && spawnedPgid > 0) {
+            process.kill(-spawnedPgid, "SIGINT");
+          } else if (spawnedPid && spawnedPid > 0) {
+            process.kill(spawnedPid, "SIGINT");
+          }
+        } catch {
+          // Process may have already exited.
+        }
+      };
+
+      if (ctx.signal) {
+        abortHandler = () => triggerProcessAbort();
+        if (ctx.signal.aborted) {
+          triggerProcessAbort();
+        } else {
+          ctx.signal.addEventListener("abort", abortHandler, { once: true });
+        }
+      }
+
+      await ctx.onCancellationReady?.();
+
+      let proc;
+      try {
+        proc = await runAdapterExecutionTargetProcess(runId, runtimeTarget, command, args, {
+          cwd,
+          env: invocationEnv,
+          timeoutSec,
+          graceSec,
+          onSpawn: handleSpawn,
+          onRuntimeProgress: ctx.onRuntimeProgress,
+          onLog: bufferedOnLog,
+          runLogTail: paperclipBridge?.runLogTail,
+        });
+      } finally {
+        if (ctx.signal && abortHandler) {
+          ctx.signal.removeEventListener("abort", abortHandler);
+        }
+      }
       if (stdoutBuffer) await queueLog("stdout", stdoutBuffer);
       await logQueue;
       return { proc, parsed: parseOmpJsonl(proc.stdout) };

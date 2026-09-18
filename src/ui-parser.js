@@ -323,11 +323,35 @@ function parseStdoutLine(line, ts) {
     if (type === "turn_start") return [];
     if (type === "message_start") return asRecord(parsed.message) ? [] : raw();
     if (type === "tool_execution_update") {
-      return asString(parsed.toolCallId)
-        && asString(parsed.toolName)
-        && Object.prototype.hasOwnProperty.call(parsed, "partialResult")
-        ? []
-        : raw();
+      const toolCallId = asString(parsed.toolCallId);
+      const toolName = asString(parsed.toolName);
+      if (!toolCallId || !toolName) return raw();
+      const partialRec = asRecord(parsed.partialResult);
+      let progressText = "";
+      if (partialRec) {
+        const detailsRec = asRecord(partialRec.details);
+        if (typeof partialRec.progress === "string" && partialRec.progress.trim()) {
+          progressText = partialRec.progress.trim();
+        } else if (detailsRec && typeof detailsRec.progress === "string" && detailsRec.progress.trim()) {
+          progressText = detailsRec.progress.trim();
+        } else if (typeof partialRec.output === "string" && partialRec.output.trim()) {
+          progressText = partialRec.output.trim();
+        }
+      } else if (typeof parsed.partialResult === "string" && parsed.partialResult.trim()) {
+        progressText = parsed.partialResult.trim();
+      }
+      if (progressText) {
+        return [{
+          kind: "tool_result",
+          ts: asString(parsed.timestamp, new Date().toISOString()),
+          toolUseId: toolCallId,
+          toolName: toolName,
+          content: progressText,
+          isError: false,
+          delta: true,
+        }];
+      }
+      return [];
     }
     if (type === "session_stop") {
       return Array.isArray(parsed.messages) && asString(parsed.session_id) ? [] : raw();

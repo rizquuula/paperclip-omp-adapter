@@ -1,6 +1,6 @@
 export const type = "omp_local";
 export const label = "Oh My Pi (OMP)";
-export const OMP_INSTALL_COMMAND = "npm install -g @oh-my-pi/pi-coding-agent@17.0.5";
+export const OMP_INSTALL_COMMAND = "npm install -g @oh-my-pi/pi-coding-agent@latest";
 
 export const models: Array<{ id: string; label: string }> = [];
 

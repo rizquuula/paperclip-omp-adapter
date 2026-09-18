@@ -98,15 +98,6 @@ export function createServerAdapter(): ServerAdapterModule {
     models: advertisedModels,
     listModels,
     refreshModels,
-    modelProfiles: [
-      {
-        key: "cheap",
-        label: "OMP smol role",
-        description: "Use OMP's configured @smol model role.",
-        adapterConfig: { model: "@smol" },
-        source: "adapter_default",
-      },
-    ],
     supportsLocalAgentJwt: true,
     supportsInstructionsBundle: true,
     instructionsPathKey: "instructionsFilePath",

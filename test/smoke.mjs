@@ -311,5 +311,55 @@ try {
   else process.env.PI_PROFILE = savedPiProfile;
 }
 
+// Regression test 1: modelProfiles removed in 2026.916.0
+assert.equal("modelProfiles" in adapter, false, "modelProfiles must be removed from adapter definition");
+
+// Regression test 2: UI parser handles tool_execution_update with progress
+const progressLine = JSON.stringify({
+  type: "tool_execution_update",
+  timestamp: new Date().toISOString(),
+  toolCallId: "call-123",
+  toolName: "bash",
+  partialResult: { details: { progress: "Building project..." } }
+});
+const progressEntries = parseStdoutLine(progressLine);
+assert.equal(progressEntries.length, 1);
+assert.equal(progressEntries[0].kind, "tool_result");
+assert.equal(progressEntries[0].toolUseId, "call-123");
+assert.equal(progressEntries[0].content, "Building project...");
+assert.equal(progressEntries[0].delta, true);
+
+// Regression test 3: UI parser drops empty tool_execution_update
+const emptyToolUpdate = JSON.stringify({
+  type: "tool_execution_update",
+  timestamp: new Date().toISOString(),
+  toolCallId: "call-123",
+  toolName: "bash",
+  partialResult: {}
+});
+assert.deepEqual(parseStdoutLine(emptyToolUpdate), []);
+
+// Regression test 4: --add-dir and --print-thoughts argument generation
+const addDirRunId = "00000000-0000-4000-8000-000000000015";
+await run(
+  addDirRunId,
+  emptyRuntime,
+  "ADD_DIR_OK",
+  {
+    ...baseConfig,
+    noSession: true,
+    printThoughts: true,
+    addDirs: "/tmp/custom-workspace-2",
+  },
+  {
+    paperclipWorkspaces: [
+      { cwd: "/tmp/custom-workspace-1" },
+    ],
+  },
+);
+const addDirMeta = metas.at(-1);
+assert.ok(addDirMeta?.commandArgs?.includes("--print-thoughts"), "commandArgs must include --print-thoughts");
+assert.ok(addDirMeta?.commandArgs?.some(arg => arg.startsWith("--add-dir=")), "commandArgs must include --add-dir");
+
 await fs.rm(root, { recursive: true, force: true });
 console.log("adapter smoke passed");
