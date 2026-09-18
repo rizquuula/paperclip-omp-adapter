@@ -149,35 +149,87 @@ function parseAgentEnd(parsed, ts) {
 }
 
 const REDACTED_LOG_MARKER = "***REDACTED***";
+const REPAIR_MAX_STEPS = 16;
 
 /**
- * Repair a JSON line whose escapes Paperclip's log redaction swallowed.
+ * @param {string} line
+ * @returns {number}
+ */
+function jsonErrorPosition(line) {
+  try {
+    JSON.parse(line);
+    return -1;
+  } catch (error) {
+    const match = /position (\d+)/.exec(error instanceof Error ? error.message : String(error));
+    return match ? Number(match[1]) : line.length;
+  }
+}
+
+/**
+ * @param {string} line
+ * @returns {number[]}
+ */
+function markerPositions(line) {
+  const positions = [];
+  let index = line.indexOf(REDACTED_LOG_MARKER);
+  while (index >= 0) {
+    positions.push(index);
+    index = line.indexOf(REDACTED_LOG_MARKER, index + REDACTED_LOG_MARKER.length);
+  }
+  return positions;
+}
+
+/**
+ * @param {string} line
+ * @param {number} at
+ * @returns {string[]}
+ */
+function repairCandidates(line, at) {
+  const end = at + REDACTED_LOG_MARKER.length;
+  const head = line.slice(0, end);
+  const rest = line.slice(end);
+  const candidates = [];
+  if (rest.startsWith("\\\"")) candidates.push(`${head}"${rest.slice(2)}`);
+  if (rest.startsWith("\"")) candidates.push(`${head}\\"${rest.slice(1)}`);
+  if (rest.startsWith("}") || rest.startsWith("]") || rest.startsWith(",")) {
+    candidates.push(`${head}"${rest}`);
+  }
+  return candidates;
+}
+
+/**
+ * Rebuild a JSON line whose escapes Paperclip's log redaction swallowed, or null when unrecoverable.
  *
  * @param {string} line
- * @returns {string}
+ * @returns {string | null}
  */
 function repairRedactedJsonLine(line) {
-  if (!line.includes(REDACTED_LOG_MARKER)) return line;
-  let out = "";
-  let index = 0;
-  for (;;) {
-    const marker = line.indexOf(REDACTED_LOG_MARKER, index);
-    if (marker < 0) {
-      out += line.slice(index);
-      break;
+  if (!line.includes(REDACTED_LOG_MARKER)) return null;
+  let current = line;
+  let position = jsonErrorPosition(current);
+  if (position < 0) return current;
+
+  for (let step = 0; step < REPAIR_MAX_STEPS; step += 1) {
+    const markers = markerPositions(current);
+    const preceding = markers.filter((marker) => marker <= position);
+    const at = preceding.length > 0 ? preceding[preceding.length - 1] : markers[0];
+    if (at === undefined) return null;
+
+    let best = null;
+    let bestPosition = position;
+    for (const candidate of repairCandidates(current, at)) {
+      const candidatePosition = jsonErrorPosition(candidate);
+      if (candidatePosition < 0) return candidate;
+      if (candidatePosition > bestPosition) {
+        best = candidate;
+        bestPosition = candidatePosition;
+      }
     }
-    out += line.slice(index, marker) + REDACTED_LOG_MARKER;
-    let next = marker + REDACTED_LOG_MARKER.length;
-    const char = line[next];
-    if (char === "\"") {
-      out += "\\\"";
-      next += 1;
-    } else if (char === "}" || char === "]" || char === ",") {
-      out += "\"";
-    }
-    index = next;
+    if (best === null) return null;
+    current = best;
+    position = bestPosition;
   }
-  return out;
+  return jsonErrorPosition(current) < 0 ? current : null;
 }
 
 /**
@@ -214,11 +266,14 @@ function parseStdoutLine(line, ts) {
     } catch {
       parsed = null;
     }
-    if (!parsed && line.includes(REDACTED_LOG_MARKER)) {
-      try {
-        parsed = asRecord(JSON.parse(repairRedactedJsonLine(line)));
-      } catch {
-        parsed = null;
+    if (!parsed) {
+      const repaired = repairRedactedJsonLine(line);
+      if (repaired !== null) {
+        try {
+          parsed = asRecord(JSON.parse(repaired));
+        } catch {
+          parsed = null;
+        }
       }
     }
     if (!parsed) return line.startsWith("{") ? unreadableEntry(line, ts) : raw();

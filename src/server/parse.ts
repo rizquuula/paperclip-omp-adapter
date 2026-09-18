@@ -1,4 +1,4 @@
-import { REDACTED_LOG_MARKER, repairRedactedJsonLine } from "./redaction-repair.js";
+import { repairRedactedJsonLine } from "./redaction-repair.js";
 
 export interface ParsedOmpToolCall {
   toolCallId: string;
@@ -106,8 +106,9 @@ function parseJsonObject(line: string): JsonObject | null {
 
 function parseJsonLine(line: string): JsonObject | null {
   const direct = parseJsonObject(line);
-  if (direct || !line.includes(REDACTED_LOG_MARKER)) return direct;
-  return parseJsonObject(repairRedactedJsonLine(line));
+  if (direct) return direct;
+  const repaired = repairRedactedJsonLine(line);
+  return repaired === null ? null : parseJsonObject(repaired);
 }
 
 export function parseOmpJsonl(stdout: string): ParsedOmpOutput {

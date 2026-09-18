@@ -365,14 +365,14 @@ assert.ok(addDirMeta?.commandArgs?.some(arg => arg.startsWith("--add-dir=")), "c
 const redactedLines = (await fs.readFile(new URL("./fixtures/redacted-lines.txt", import.meta.url), "utf8"))
   .split("\n")
   .filter(Boolean);
-assert.equal(redactedLines.length, 2);
-for (const redactedLine of redactedLines) {
+assert.equal(redactedLines.length, 3);
+for (const [index, redactedLine] of redactedLines.entries()) {
   assert.throws(() => JSON.parse(redactedLine), "fixture must stay corrupted");
   const entries = parseStdoutLine(redactedLine, transcriptTs);
-  assert.equal(entries.length, 1);
-  assert.equal(entries[0].kind, "tool_result");
+  assert.equal(entries.length, 1, `fixture ${index} must produce one entry`);
+  assert.equal(entries[0].kind, "tool_result", `fixture ${index} must be repaired`);
   assert.equal(entries[0].toolName, "bash");
-  assert.match(entries[0].content, /\*\*\*REDACTED\*\*\*/);
+  if (index < 2) assert.match(entries[0].content, /\*\*\*REDACTED\*\*\*/);
 }
 
 // Regression test 6: an unrepairable JSON line collapses into one short notice
