@@ -9,6 +9,7 @@ import {
   applyPreparedOmpAgentEnvironment,
   rewriteRemoteConfigPaths,
 } from "../dist/server/execute.js";
+import { parseOmpJsonl } from "../dist/server/parse.js";
 import { resolveOmpProfile } from "../dist/server/profile.js";
 
 const adapter = createServerAdapter();
@@ -227,7 +228,6 @@ const baseConfig = {
   noPty: true,
   noTitle: true,
   advisor: false,
-  autoApprove: true,
   extraArgs: ["--no-tools"],
 };
 const metas = [];
@@ -360,6 +360,58 @@ await run(
 const addDirMeta = metas.at(-1);
 assert.ok(addDirMeta?.commandArgs?.includes("--print-thoughts"), "commandArgs must include --print-thoughts");
 assert.ok(addDirMeta?.commandArgs?.some(arg => arg.startsWith("--add-dir=")), "commandArgs must include --add-dir");
+
+// Regression test 5: Paperclip log redaction corrupts JSONL; the parsers repair it
+const redactedLines = (await fs.readFile(new URL("./fixtures/redacted-lines.txt", import.meta.url), "utf8"))
+  .split("\n")
+  .filter(Boolean);
+assert.equal(redactedLines.length, 2);
+for (const redactedLine of redactedLines) {
+  assert.throws(() => JSON.parse(redactedLine), "fixture must stay corrupted");
+  const entries = parseStdoutLine(redactedLine, transcriptTs);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].kind, "tool_result");
+  assert.equal(entries[0].toolName, "bash");
+  assert.match(entries[0].content, /\*\*\*REDACTED\*\*\*/);
+}
+
+// Regression test 6: an unrepairable JSON line collapses into one short notice
+const truncatedLine = '{"type":"tool_execution_end","toolCallId":"c3","result":{"content":"';
+const truncatedEntries = parseStdoutLine(truncatedLine, transcriptTs);
+assert.equal(truncatedEntries.length, 1);
+assert.equal(truncatedEntries[0].kind, "system");
+assert.ok(truncatedEntries[0].text.length < 200);
+assert.match(truncatedEntries[0].text, /tool_execution_end/);
+
+// Regression test 7: parseOmpJsonl repairs redacted lines and bounds unknownLines
+const repairedStdout = Array.from(
+  { length: 120 },
+  (_value, index) => redactedLines[0].replace('"toolCallId":"c1"', `"toolCallId":"c1-${index}"`),
+).join("\n");
+const repairedParse = parseOmpJsonl(repairedStdout);
+assert.equal(repairedParse.toolCalls.length, 120);
+assert.equal(repairedParse.unknownLines.length, 0);
+
+const unreadableParse = parseOmpJsonl(Array.from({ length: 120 }, () => truncatedLine).join("\n"));
+assert.equal(unreadableParse.unknownLines.length, 51);
+assert.match(unreadableParse.unknownLines.at(-1), /^… 70 more unparsed lines \(\d+ bytes\)$/);
+for (const entry of unreadableParse.unknownLines.slice(0, -1)) {
+  assert.ok(entry.length <= 240);
+}
+
+// Regression test 8: adapter defaults are applied when the config leaves fields empty
+await run(
+  "00000000-0000-4000-8000-000000000016",
+  emptyRuntime,
+  "DEFAULTS_OK",
+  { command: fakeOmp, cwd: executionCwd, noSession: true },
+);
+const defaultsMeta = metas.at(-1);
+const defaultArgs = defaultsMeta?.commandArgs ?? [];
+assert.ok(defaultArgs.includes("--no-title"), "default commandArgs must include --no-title");
+assert.ok(defaultArgs.includes("--print-thoughts"), "default commandArgs must include --print-thoughts");
+assert.equal(defaultArgs[defaultArgs.indexOf("--approval-mode") + 1], "yolo");
+assert.ok(!defaultArgs.includes("--auto-approve"), "--auto-approve must no longer be emitted");
 
 await fs.rm(root, { recursive: true, force: true });
 console.log("adapter smoke passed");

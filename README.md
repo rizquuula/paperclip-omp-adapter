@@ -74,7 +74,7 @@ The adapter exposes the following configuration schema fields under an agent's a
 - `command` (string): Path to the OMP executable. Default: `omp`.
 - `model` (string): Default model selector (e.g., `anthropic/claude-3-7-sonnet`, `openai/gpt-4o`).
 - `thinking` (string): Reasoning level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `auto`).
-- `printThoughts` (boolean): Whether to pass `--print-thoughts` or `--hide-thinking`.
+- `printThoughts` (boolean): Stream thinking blocks into the Paperclip transcript (`--print-thoughts`). Default: `true`; `false` passes `--hide-thinking`.
 - `profile` (string): Named OMP profile to activate (`OMP_PROFILE`).
 
 ### Workspace & Sessions
@@ -90,12 +90,11 @@ The adapter exposes the following configuration schema fields under an agent's a
 - `skills` (string): Comma-separated list of explicit skill names to enable.
 - `noSkills` (boolean): Disable built-in skills discovery.
 - `noRules` (boolean): Skip loading `RULES.md`.
-- `approvalMode` (select): Tool execution approval policy (`yolo`, `write`, `always-ask`). Default: `yolo`.
-- `autoApprove` (boolean): Legacy tool auto-approval toggle.
+- `approvalMode` (select): Tool execution approval policy (`yolo`, `write`, `always-ask`). Default: `yolo`, always passed as `--approval-mode` so the run never depends on `tools.approvalMode` in the OMP config.
 
 ### Diagnostics & Extensions
-- `timeoutSec` (number): Maximum wall-clock execution time in seconds before SIGINT.
-- `graceSec` (number): Grace period before SIGKILL after SIGINT.
+- `timeoutSec` (number): Maximum wall-clock execution time in seconds before SIGINT. Default: `43200` (12 hours).
+- `graceSec` (number): Grace period before SIGKILL after SIGINT. Default: `20`.
 - `configFiles` (textarea): Custom `config.yml` overlay paths.
 - `extensions` (textarea): Paths to custom OMP extensions.
 - `pluginDirs` (textarea): Paths to plugin directories.

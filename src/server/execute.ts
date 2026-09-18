@@ -212,11 +212,7 @@ function buildOmpArgs(input: {
   const noSession = asBoolean(config.noSession, false);
 
   if (model) args.push("--model", model);
-  if (config.printThoughts === true) {
-    args.push("--print-thoughts");
-  } else if (config.printThoughts === false) {
-    args.push("--hide-thinking");
-  }
+  args.push(asBoolean(config.printThoughts, true) ? "--print-thoughts" : "--hide-thinking");
   if (thinking) args.push("--thinking", thinking);
   if (profile && !input.omitProfile) args.push("--profile", profile);
   if (smol) args.push("--smol", smol);
@@ -227,11 +223,10 @@ function buildOmpArgs(input: {
   if (tools.length > 0) args.push("--tools", tools.join(","));
   if (skills.length > 0) args.push("--skills", skills.join(","));
 
-  if (["always-ask", "write", "yolo"].includes(approvalMode)) {
-    args.push("--approval-mode", approvalMode);
-  } else if (asBoolean(config.autoApprove, true)) {
-    args.push("--auto-approve");
-  }
+  args.push(
+    "--approval-mode",
+    ["always-ask", "write", "yolo"].includes(approvalMode) ? approvalMode : "yolo",
+  );
 
   if (asBoolean(config.advisor, false)) args.push("--advisor");
   const noPrewalk = asBoolean(config.noPrewalk, false);
@@ -262,7 +257,7 @@ function buildOmpArgs(input: {
   if (asBoolean(config.noRules, false)) args.push("--no-rules");
   if (asBoolean(config.noLsp, false)) args.push("--no-lsp");
   if (asBoolean(config.noPty, false)) args.push("--no-pty");
-  if (asBoolean(config.noTitle, false)) args.push("--no-title");
+  if (asBoolean(config.noTitle, true)) args.push("--no-title");
 
   if (noSession) {
     args.push("--no-session");
@@ -456,7 +451,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     const command = resolveOmpCommand(config);
     const timeoutSec = resolveAdapterExecutionTargetTimeoutSec(
       executionTarget,
-      asNumber(config.timeoutSec, 0),
+      asNumber(config.timeoutSec, 43200),
     );
     const graceSec = asNumber(config.graceSec, 20);
 
@@ -638,7 +633,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       let stdoutBuffer = "";
       let logQueue = Promise.resolve();
       const queueLog = (stream: "stdout" | "stderr", chunk: string): Promise<void> => {
-        logQueue = logQueue.then(() => onLog(stream, chunk));
+        logQueue = logQueue.then(() => onLog(stream, chunk)).catch(() => {});
         return logQueue;
       };
       const bufferedOnLog = async (stream: "stdout" | "stderr", chunk: string): Promise<void> => {

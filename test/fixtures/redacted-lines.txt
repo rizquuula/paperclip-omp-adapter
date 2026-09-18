@@ -1,0 +1,2 @@
+{"type":"tool_execution_end","toolCallId":"c1","toolName":"bash","result":{"content":[{"type":"text","text":"PAPERCLIP_API_KEY=***REDACTED***"/etc/hosts\",\"/etc/ssl\"]"}]},"isError":false}
+{"type":"tool_execution_end","toolCallId":"c2","toolName":"bash","result":{"content":[{"type":"text","text":"curl -sS \"$URL\" -H \"Authorization: Bearer ***REDACTED***""}]},"isError":false}

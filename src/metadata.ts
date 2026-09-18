@@ -26,7 +26,7 @@ Core fields:
 - smolModel / slowModel / planModel: role overrides used by OMP's auxiliary work
 - tools / noTools: optional comma-separated allowlist and explicit default-tool disable; blank preserves OMP's complete default toolset
 - modelCycle: optional selectors passed to OMP --models
-- approvalMode: yolo, write, or always-ask; headless runs default to yolo
+- approvalMode: yolo, write, or always-ask; always passed to OMP, defaulting to yolo for headless runs
 - extensions / hooks / pluginDirs / configFiles: newline-separated OMP paths
 - advisor, prewalk/noPrewalk, planYolo, skills, rules, LSP, PTY, title, allowHome, and ephemeral-session controls map directly to OMP flags
 - systemPrompt replaces OMP's base prompt while Paperclip's execution contract remains appended

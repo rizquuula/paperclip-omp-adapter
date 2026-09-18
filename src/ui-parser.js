@@ -148,8 +148,55 @@ function parseAgentEnd(parsed, ts) {
   }];
 }
 
+const REDACTED_LOG_MARKER = "***REDACTED***";
+
 /**
- * Parse one OMP 17.0.5 JSONL stdout line into Paperclip transcript entries.
+ * Repair a JSON line whose escapes Paperclip's log redaction swallowed.
+ *
+ * @param {string} line
+ * @returns {string}
+ */
+function repairRedactedJsonLine(line) {
+  if (!line.includes(REDACTED_LOG_MARKER)) return line;
+  let out = "";
+  let index = 0;
+  for (;;) {
+    const marker = line.indexOf(REDACTED_LOG_MARKER, index);
+    if (marker < 0) {
+      out += line.slice(index);
+      break;
+    }
+    out += line.slice(index, marker) + REDACTED_LOG_MARKER;
+    let next = marker + REDACTED_LOG_MARKER.length;
+    const char = line[next];
+    if (char === "\"") {
+      out += "\\\"";
+      next += 1;
+    } else if (char === "}" || char === "]" || char === ",") {
+      out += "\"";
+    }
+    index = next;
+  }
+  return out;
+}
+
+/**
+ * @param {string} line
+ * @param {string} ts
+ * @returns {Array<Record<string, unknown>>}
+ */
+function unreadableEntry(line, ts) {
+  const match = /^\{"type":"([A-Za-z_]+)"/.exec(line);
+  const kb = (line.length / 1024).toFixed(1);
+  return [{
+    kind: "system",
+    ts,
+    text: `Unreadable OMP event${match ? `: ${match[1]}` : ""} (${kb} KB) — Paperclip log redaction corrupted the JSON.`,
+  }];
+}
+
+/**
+ * Parse one OMP v18 JSONL stdout line into Paperclip transcript entries.
  * The parser is deliberately stateless so replaying a line always returns the
  * same entries, regardless of which surrounding lines Paperclip retained.
  *
@@ -161,8 +208,20 @@ function parseStdoutLine(line, ts) {
   const raw = () => [{ kind: "stdout", ts, text: line }];
 
   try {
-    const parsed = asRecord(JSON.parse(line));
-    if (!parsed) return raw();
+    let parsed = null;
+    try {
+      parsed = asRecord(JSON.parse(line));
+    } catch {
+      parsed = null;
+    }
+    if (!parsed && line.includes(REDACTED_LOG_MARKER)) {
+      try {
+        parsed = asRecord(JSON.parse(repairRedactedJsonLine(line)));
+      } catch {
+        parsed = null;
+      }
+    }
+    if (!parsed) return line.startsWith("{") ? unreadableEntry(line, ts) : raw();
     const type = asString(parsed.type);
 
     if (type === "session" || type === "init") {

@@ -1,3 +1,5 @@
+import { REDACTED_LOG_MARKER, repairRedactedJsonLine } from "./redaction-repair.js";
+
 export interface ParsedOmpToolCall {
   toolCallId: string;
   toolName: string;
@@ -20,9 +22,12 @@ export interface ParsedOmpOutput {
   };
   costUsd: number;
   toolCalls: ParsedOmpToolCall[];
-  /** Malformed lines and valid event types not interpreted by this adapter. */
+  /** Truncated sample of malformed lines and event types this adapter does not interpret. */
   unknownLines: string[];
 }
+
+const UNKNOWN_LINE_LIMIT = 50;
+const UNKNOWN_LINE_CHARS = 200;
 
 type JsonObject = Record<string, unknown>;
 type UsageTotals = ParsedOmpOutput["usage"] & { costUsd: number };
@@ -91,6 +96,20 @@ function resultValue(value: unknown): unknown | null {
   return value === undefined ? null : value;
 }
 
+function parseJsonObject(line: string): JsonObject | null {
+  try {
+    return object(JSON.parse(line) as unknown);
+  } catch {
+    return null;
+  }
+}
+
+function parseJsonLine(line: string): JsonObject | null {
+  const direct = parseJsonObject(line);
+  if (direct || !line.includes(REDACTED_LOG_MARKER)) return direct;
+  return parseJsonObject(repairRedactedJsonLine(line));
+}
+
 export function parseOmpJsonl(stdout: string): ParsedOmpOutput {
   const result: ParsedOmpOutput = {
     sessionId: null,
@@ -109,7 +128,23 @@ export function parseOmpJsonl(stdout: string): ParsedOmpOutput {
   const messageUsage = new Map<string, UsageTotals>();
   const turnUsageKeys = new Set<string>();
   const explicitUsage: UsageTotals[] = [];
+  const unknownKept: string[] = [];
+  let unknownDropped = 0;
+  let unknownDroppedBytes = 0;
   let terminalError: string | null = null;
+
+  const recordUnknown = (line: string): void => {
+    if (unknownKept.length < UNKNOWN_LINE_LIMIT) {
+      unknownKept.push(
+        line.length > UNKNOWN_LINE_CHARS
+          ? `${line.slice(0, UNKNOWN_LINE_CHARS)}… (${line.length} bytes)`
+          : line,
+      );
+      return;
+    }
+    unknownDropped += 1;
+    unknownDroppedBytes += line.length;
+  };
 
   const readAssistant = (value: unknown, collectMessage: boolean): JsonObject | null => {
     const message = object(value);
@@ -137,17 +172,9 @@ export function parseOmpJsonl(stdout: string): ParsedOmpOutput {
   for (const rawLine of stdout.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line) continue;
-    let event: JsonObject;
-    try {
-      const parsed = JSON.parse(line) as unknown;
-      const parsedObject = object(parsed);
-      if (!parsedObject) {
-        result.unknownLines.push(rawLine);
-        continue;
-      }
-      event = parsedObject;
-    } catch {
-      result.unknownLines.push(rawLine);
+    const event = parseJsonLine(line);
+    if (!event) {
+      recordUnknown(rawLine);
       continue;
     }
 
@@ -283,7 +310,7 @@ export function parseOmpJsonl(stdout: string): ParsedOmpOutput {
       default:
         handled = false;
     }
-    if (!handled) result.unknownLines.push(rawLine);
+    if (!handled) recordUnknown(rawLine);
   }
 
   const totals: UsageTotals = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, costUsd: 0 };
@@ -302,6 +329,9 @@ export function parseOmpJsonl(stdout: string): ParsedOmpOutput {
   };
   result.costUsd = totals.costUsd;
   result.messages = [...messageTexts.values()];
+  result.unknownLines = unknownDropped > 0
+    ? [...unknownKept, `… ${unknownDropped} more unparsed lines (${unknownDroppedBytes} bytes)`]
+    : unknownKept;
   if (terminalError) result.errors.push(terminalError);
   return result;
 }
