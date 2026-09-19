@@ -7,9 +7,12 @@ import { createServerAdapter } from "../dist/index.js";
 import { prepareOmpRuntimeConfig } from "../dist/server/config.js";
 import {
   applyPreparedOmpAgentEnvironment,
+  applyRuntimeToolAccess,
   rewriteRemoteConfigPaths,
 } from "../dist/server/execute.js";
+import { classifyOmpFailure } from "../dist/server/failure.js";
 import { parseOmpJsonl } from "../dist/server/parse.js";
+import { getOmpQuotaWindows } from "../dist/server/quota.js";
 import { resolveOmpProfile } from "../dist/server/profile.js";
 
 const adapter = createServerAdapter();
@@ -155,10 +158,18 @@ if (args[0] === "models") {
   console.log(JSON.stringify({ models: [{ provider: "fake-provider", id: "fake-model", selector: "fake-provider/fake-model", name: "Fake model" }] }));
   process.exit(0);
 }
+if (args[0] === "usage") {
+  console.log(JSON.stringify({ generatedAt: 1, reports: [{ provider: "fake-provider", fetchedAt: 1, limits: [{ id: "5h", label: "Five hour", scope: {}, window: { id: "5h", label: "5 Hour", resetsAt: 1789800000000 }, amount: { used: 25, limit: 100, unit: "percent" }, status: "ok", notes: ["sample"] }] }], accountsWithoutUsage: [], disabledCredentials: [] }));
+  process.exit(0);
+}
 const resumeIndex = args.indexOf("--resume");
 const noSession = args.includes("--no-session");
 const sessionId = resumeIndex >= 0 ? args[resumeIndex + 1] : "fake-session-1";
 const prompt = args.at(-1) ?? "";
+if (prompt.includes("BOOTSTRAP_FAIL")) {
+  process.stderr.write("omp: provider overloaded, please try again in 30 seconds\\n");
+  process.exit(1);
+}
 if (!noSession) console.log(JSON.stringify({ type: "session", id: sessionId }));
 console.log(JSON.stringify({ type: "tool_execution_start", toolCallId: "fake-call-1", toolName: "bash", args: { command: "true" } }));
 console.log(JSON.stringify({ type: "tool_execution_end", toolCallId: "fake-call-1", toolName: "bash", result: { content: [{ type: "text", text: "ok" }] }, isError: false }));
@@ -443,6 +454,88 @@ assert.ok(toolEvent, "a finished tool call must publish an omp.tool run event");
 assert.equal(toolEvent.stream, "system");
 assert.equal(toolEvent.level, "info");
 assert.match(toolEvent.message, /^bash ok in \d+\.\ds \u2014 true$/);
+
+// Regression test 11: OMP failures map onto Paperclip's retry vocabulary
+const quotaFailure = classifyOmpFailure({
+  parsedError: "429 rate limit reached; retry-after: 42",
+  stderr: "",
+  timedOut: false,
+  exitCode: 1,
+  signal: null,
+});
+assert.equal(quotaFailure.errorFamily, "provider_quota");
+assert.equal(quotaFailure.errorCode, "omp_provider_quota");
+assert.ok(Date.parse(quotaFailure.retryNotBefore) > Date.now());
+assert.equal(
+  classifyOmpFailure({ parsedError: "", stderr: "upstream service unavailable", timedOut: false, exitCode: 1, signal: null }).errorFamily,
+  "transient_upstream",
+);
+assert.equal(
+  classifyOmpFailure({ parsedError: "refresh token has expired", stderr: "", timedOut: false, exitCode: 1, signal: null }).errorFamily,
+  "refresh_token_expired",
+);
+assert.deepEqual(
+  classifyOmpFailure({ parsedError: "", stderr: "", timedOut: false, exitCode: 3, signal: null }),
+  { errorCode: "omp_exit_3", errorFamily: null, retryNotBefore: null },
+);
+
+// Regression test 12: Paperclip runtime tools reach OMP through the process environment
+const runtimeEnv = {};
+const guidance = applyRuntimeToolAccess(
+  runtimeEnv,
+  {
+    version: 1,
+    guidance: "Use Paperclip connections before asking a human.",
+    mcpEndpoint: "https://paperclip.test/mcp",
+    rest: { connectionsSearch: "https://paperclip.test/search", connectionRequest: "https://paperclip.test/request" },
+    bearerToken: "rt-token",
+    expiresAt: "2026-09-19T12:00:00.000Z",
+    tools: ["connections_search", "connection_request"],
+  },
+  { getServers: () => [{ name: "github", url: "https://paperclip.test/mcp/github", token: "mcp-token", connectionId: "conn-1" }] },
+);
+assert.equal(runtimeEnv.PAPERCLIP_RUNTIME_TOOLS_TOKEN, "rt-token");
+assert.equal(runtimeEnv.PAPERCLIP_CONNECTIONS_SEARCH_URL, "https://paperclip.test/search");
+assert.match(runtimeEnv.PAPERCLIP_RUNTIME_MCP_SERVERS, /github/);
+assert.equal(JSON.parse(runtimeEnv.PAPERCLIP_RUNTIME_MCP_TOKENS).github, "mcp-token");
+assert.match(guidance, /Use Paperclip connections before asking a human\./);
+assert.match(guidance, /1 MCP server\(s\)/);
+assert.equal(applyRuntimeToolAccess({}, undefined, undefined), "");
+
+// Regression test 13: a run that never reached the provider reports bootstrap evidence
+const bootstrap = await run(
+  "00000000-0000-4000-8000-000000000018",
+  emptyRuntime,
+  "BOOTSTRAP_FAIL",
+  { ...baseConfig, noSession: true, promptTemplate: "{{context.expected}}" },
+);
+assert.equal(bootstrap.exitCode, 1);
+assert.deepEqual(bootstrap.executionRecovery, { kind: "bootstrap", providerWorkStarted: false });
+assert.equal(bootstrap.errorFamily, "transient_upstream");
+assert.ok(Date.parse(bootstrap.retryNotBefore) > Date.now());
+
+// Regression test 14: provider-billed cost is reported as the cache-adjusted amount
+assert.equal(fresh.cacheAdjustedCostUsd, fresh.costUsd);
+assert.ok(fresh.costUsd > 0);
+
+// Regression test 15: omp usage --json becomes a Paperclip provider quota result
+const previousQuotaCommand = process.env.PAPERCLIP_OMP_COMMAND;
+process.env.PAPERCLIP_OMP_COMMAND = fakeOmp;
+try {
+  const quota = await getOmpQuotaWindows();
+  assert.equal(quota.ok, true, quota.error ?? "quota probe failed");
+  assert.equal(quota.provider, "fake-provider");
+  assert.equal(quota.source, "omp usage --json");
+  assert.equal(quota.windows.length, 1);
+  assert.equal(quota.windows[0].label, "5 Hour");
+  assert.equal(quota.windows[0].usedPercent, 25);
+  assert.equal(quota.windows[0].resetsAt, new Date(1789800000000).toISOString());
+  assert.equal(quota.windows[0].valueLabel, "25 / 100 percent");
+  assert.match(quota.windows[0].detail, /ok/);
+} finally {
+  if (previousQuotaCommand === undefined) delete process.env.PAPERCLIP_OMP_COMMAND;
+  else process.env.PAPERCLIP_OMP_COMMAND = previousQuotaCommand;
+}
 
 await fs.rm(root, { recursive: true, force: true });
 console.log("adapter smoke passed");

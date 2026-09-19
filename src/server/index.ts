@@ -13,6 +13,7 @@ import {
 import { detectModel, getConfigSchema, resolveOmpCommand } from "./config.js";
 import { execute } from "./execute.js";
 import { listOmpModels, refreshOmpModels } from "./models.js";
+import { getOmpQuotaWindows } from "./quota.js";
 import { listOmpSkills, syncOmpSkills } from "./skills.js";
 import { testEnvironment } from "./test.js";
 
@@ -99,6 +100,8 @@ export function createServerAdapter(): ServerAdapterModule {
     listModels,
     refreshModels,
     supportsLocalAgentJwt: true,
+    runtimeToolDelivery: "environment",
+    getQuotaWindows: getOmpQuotaWindows,
     supportsInstructionsBundle: true,
     instructionsPathKey: "instructionsFilePath",
     requiresMaterializedRuntimeSkills: false,

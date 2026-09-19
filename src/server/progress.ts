@@ -59,12 +59,19 @@ function seconds(elapsedMs: number): string {
   return `${(elapsedMs / 1000).toFixed(1)}s`;
 }
 
-/** Feed OMP stdout lines to Paperclip's live status and durable run events. */
+export interface OmpStreamReporter {
+  ingest(line: string): Promise<void>;
+  /** Tool calls that started and never reported an end. */
+  pendingToolCount(): number;
+  /** True once OMP emitted assistant output or a tool call. */
+  sawProviderWork(): boolean;
+}
+
+/** Feed OMP stdout lines to Paperclip's live status, durable run events, and recovery evidence. */
 export function createOmpProgressReporter(
   sink: ProgressSink | undefined,
   events: EventSink | undefined,
-): (line: string) => Promise<void> {
-  if (!sink && !events) return async () => {};
+): OmpStreamReporter {
 
   let lastEmitMs = 0;
   let currentToolName: string | null = null;
@@ -72,6 +79,7 @@ export function createOmpProgressReporter(
   let streamedText = "";
   let streamedThinking = "";
   let toolEventCount = 0;
+  let providerWorkSeen = false;
   const pendingTools = new Map<string, { toolName: string; hint: string; startedMs: number }>();
 
   const emit = async (message: string, force: boolean): Promise<void> => {
@@ -111,7 +119,7 @@ export function createOmpProgressReporter(
     await publish("omp.tool", message, failed);
   };
 
-  return async (line: string): Promise<void> => {
+  const ingest = async (line: string): Promise<void> => {
     const event = parseOmpJsonLine(line.trim());
     if (!event) return;
 
@@ -123,6 +131,7 @@ export function createOmpProgressReporter(
         const hint = argumentHint(event.args);
         if (toolCallId) pendingTools.set(toolCallId, { toolName, hint, startedMs: Date.now() });
         currentToolName = toolName;
+        providerWorkSeen = true;
         streamedText = "";
         await emit(`Running ${toolName}`, true);
         return;
@@ -148,6 +157,7 @@ export function createOmpProgressReporter(
         if (!update) return;
         const delta = text(update.delta);
         if (!delta) return;
+        providerWorkSeen = true;
         if (text(update.type) === "text_delta") {
           streamedText = snippetOf(streamedText + delta);
           lastAssistantSnippet = streamedText;
@@ -176,5 +186,11 @@ export function createOmpProgressReporter(
       default:
         return;
     }
+  };
+
+  return {
+    ingest,
+    pendingToolCount: () => pendingTools.size,
+    sawProviderWork: () => providerWorkSeen,
   };
 }

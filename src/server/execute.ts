@@ -50,6 +50,7 @@ import {
   type PreparedOmpRuntimeConfig,
 } from "./config.js";
 import { isOmpUnknownSessionError, parseOmpJsonl, type ParsedOmpOutput } from "./parse.js";
+import { classifyOmpFailure } from "./failure.js";
 import { createOmpProgressReporter } from "./progress.js";
 import { ensureOmpSkills } from "./skills.js";
 
@@ -83,6 +84,8 @@ type ProcessAttempt = {
     stderr: string;
   };
   parsed: ParsedOmpOutput;
+  pendingToolCount: number;
+  sawProviderWork: boolean;
 };
 
 function stringList(value: unknown, commaSeparated = false): string[] {
@@ -378,6 +381,49 @@ async function buildPrompts(input: {
   };
 }
 
+export function applyRuntimeToolAccess(
+  env: Record<string, string>,
+  tools: AdapterExecutionContext["runtimeTools"],
+  mcp: AdapterExecutionContext["runtimeMcp"],
+): string {
+  const sections: string[] = [];
+  if (tools) {
+    env.PAPERCLIP_RUNTIME_TOOLS_TOKEN = tools.bearerToken;
+    env.PAPERCLIP_RUNTIME_TOOLS_MCP_ENDPOINT = tools.mcpEndpoint;
+    env.PAPERCLIP_RUNTIME_TOOLS_EXPIRES_AT = tools.expiresAt;
+    env.PAPERCLIP_CONNECTIONS_SEARCH_URL = tools.rest.connectionsSearch;
+    env.PAPERCLIP_CONNECTION_REQUEST_URL = tools.rest.connectionRequest;
+    sections.push(tools.guidance);
+    sections.push(
+      [
+        "Paperclip runtime tools are delivered through the environment of this run.",
+        `Bearer token: $PAPERCLIP_RUNTIME_TOOLS_TOKEN (valid until ${tools.expiresAt}).`,
+        `Search connections: POST $PAPERCLIP_CONNECTIONS_SEARCH_URL`,
+        `Request a connection: POST $PAPERCLIP_CONNECTION_REQUEST_URL`,
+        `MCP endpoint: $PAPERCLIP_RUNTIME_TOOLS_MCP_ENDPOINT`,
+        "Send the bearer token as the Authorization header. Never print the token.",
+      ].join("\n"),
+    );
+  }
+  const servers = mcp?.getServers() ?? [];
+  if (servers.length > 0) {
+    env.PAPERCLIP_RUNTIME_MCP_SERVERS = JSON.stringify(
+      servers.map((server) => ({ name: server.name, url: server.url, connectionId: server.connectionId })),
+    );
+    env.PAPERCLIP_RUNTIME_MCP_TOKENS = JSON.stringify(
+      Object.fromEntries(servers.map((server) => [server.name, server.token])),
+    );
+    sections.push(
+      [
+        `Paperclip provisioned ${servers.length} MCP server(s) for this run: ${servers.map((s) => s.name).join(", ")}.`,
+        "Endpoints are in $PAPERCLIP_RUNTIME_MCP_SERVERS and their bearer tokens in $PAPERCLIP_RUNTIME_MCP_TOKENS, keyed by server name.",
+        "OMP loads MCP servers from its agent directory, so reach these over HTTP for this run instead of expecting them in the tool list.",
+      ].join("\n"),
+    );
+  }
+  return sections.join("\n\n");
+}
+
 export function applyPreparedOmpAgentEnvironment(
   env: Record<string, string>,
   prepared: PreparedOmpRuntimeConfig,
@@ -439,6 +485,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       env[key] = value;
     }
     if (!env.PAPERCLIP_API_KEY && authToken) env.PAPERCLIP_API_KEY = authToken;
+    const runtimeToolGuidance = applyRuntimeToolAccess(env, ctx.runtimeTools, ctx.runtimeMcp);
     applyPreparedOmpAgentEnvironment(env, preparedConfig);
 
     const inheritedLocalEnv = stringsOnly(sanitizeInheritedPaperclipEnv(process.env));
@@ -598,6 +645,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       cwd,
       onLog,
     });
+    if (runtimeToolGuidance) {
+      prompts.systemPrompt = joinPromptSections([prompts.systemPrompt, runtimeToolGuidance]);
+      prompts.promptMetrics.systemPromptChars = prompts.systemPrompt.length;
+    }
     const commandNotes = [
       ...preparedConfig.notes,
       ...prompts.notes,
@@ -637,7 +688,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         logQueue = logQueue.then(() => onLog(stream, chunk)).catch(() => {});
         return logQueue;
       };
-      const reportProgress = createOmpProgressReporter(ctx.onRuntimeProgress, ctx.onEvent);
+      const reporter = createOmpProgressReporter(ctx.onRuntimeProgress, ctx.onEvent);
       const bufferedOnLog = async (stream: "stdout" | "stderr", chunk: string): Promise<void> => {
         if (stream === "stderr") {
           await queueLog(stream, chunk);
@@ -649,7 +700,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           const completeLine = stdoutBuffer.slice(0, newline + 1);
           stdoutBuffer = stdoutBuffer.slice(newline + 1);
           await queueLog("stdout", completeLine);
-          await reportProgress(completeLine);
+          await reporter.ingest(completeLine);
           newline = stdoutBuffer.indexOf("\n");
         }
       };
@@ -709,7 +760,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       }
       if (stdoutBuffer) await queueLog("stdout", stdoutBuffer);
       await logQueue;
-      return { proc, parsed: parseOmpJsonl(proc.stdout) };
+      return {
+        proc,
+        parsed: parseOmpJsonl(proc.stdout),
+        pendingToolCount: reporter.pendingToolCount(),
+        sawProviderWork: reporter.sawProviderWork(),
+      };
     };
 
     const toResult = (
@@ -737,6 +793,21 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       const model = attempt.parsed.model ?? (asString(executionConfig.model, "").trim() || null);
       const fallbackError = parsedError || stderrLine || `OMP exited with code ${effectiveExitCode}.`;
       const failed = effectiveExitCode !== 0 || attempt.proc.timedOut;
+      const classification = failed
+        ? classifyOmpFailure({
+            parsedError,
+            stderr: attempt.proc.stderr,
+            timedOut: attempt.proc.timedOut,
+            exitCode: effectiveExitCode,
+            signal: attempt.proc.signal,
+          })
+        : { errorCode: null, errorFamily: null, retryNotBefore: null };
+      const cancelled = ctx.signal?.aborted === true;
+      const executionRecovery = cancelled && resolvedSessionId && attempt.pendingToolCount === 0
+        ? { kind: "interrupted", providerStopped: true, sessionPreserved: true, actionOutcomes: "settled" } as const
+        : !attempt.sawProviderWork && failed
+          ? { kind: "bootstrap", providerWorkStarted: false } as const
+          : null;
       const result: AdapterExecutionResult & { usageBasis: "per_run" } = {
         exitCode: effectiveExitCode,
         signal: attempt.proc.signal,
@@ -746,6 +817,10 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           : failed
             ? fallbackError
             : null,
+        ...(classification.errorCode ? { errorCode: classification.errorCode } : {}),
+        ...(classification.errorFamily ? { errorFamily: classification.errorFamily } : {}),
+        ...(classification.retryNotBefore ? { retryNotBefore: classification.retryNotBefore } : {}),
+        ...(executionRecovery ? { executionRecovery } : {}),
         usage: attempt.parsed.usage,
         usageBasis: "per_run",
         sessionId: resolvedSessionId,
@@ -756,9 +831,13 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         model,
         billingType: "unknown",
         costUsd: attempt.parsed.costUsd,
+        ...(attempt.parsed.costUsd > 0 ? { cacheAdjustedCostUsd: attempt.parsed.costUsd } : {}),
         summary: attempt.parsed.finalMessage ?? attempt.parsed.messages.at(-1) ?? null,
         clearSession: retriedFresh && !resolvedSessionId,
         resultJson: {
+          ...(executionRecovery?.kind === "interrupted"
+            ? { executionCancellation: { state: "acknowledged" } }
+            : {}),
           stdout: attempt.proc.stdout,
           stderr: attempt.proc.stderr,
           errors: attempt.parsed.errors,
