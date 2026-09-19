@@ -637,7 +637,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         logQueue = logQueue.then(() => onLog(stream, chunk)).catch(() => {});
         return logQueue;
       };
-      const reportProgress = createOmpProgressReporter(ctx.onRuntimeProgress);
+      const reportProgress = createOmpProgressReporter(ctx.onRuntimeProgress, ctx.onEvent);
       const bufferedOnLog = async (stream: "stdout" | "stderr", chunk: string): Promise<void> => {
         if (stream === "stderr") {
           await queueLog(stream, chunk);

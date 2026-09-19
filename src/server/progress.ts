@@ -2,16 +2,29 @@ import type { AdapterExecutionContext } from "@paperclipai/adapter-utils";
 import { parseOmpJsonLine } from "./parse.js";
 
 type ProgressSink = NonNullable<AdapterExecutionContext["onRuntimeProgress"]>;
+type EventSink = NonNullable<AdapterExecutionContext["onEvent"]>;
 
 const PROGRESS_MIN_INTERVAL_MS = 1000;
 const SNIPPET_CHARS = 200;
+const HINT_CHARS = 120;
+const MAX_TOOL_EVENTS = 200;
 
 function text(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function collapse(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
 function snippetOf(value: string): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
+  const normalized = collapse(value);
   return normalized.length > SNIPPET_CHARS ? normalized.slice(-SNIPPET_CHARS) : normalized;
 }
 
@@ -20,25 +33,49 @@ function assistantText(content: unknown): string {
   if (!Array.isArray(content)) return "";
   let out = "";
   for (const item of content) {
-    if (item !== null && typeof item === "object" && !Array.isArray(item)) {
-      const block = item as Record<string, unknown>;
-      if (block.type === "text") out += text(block.text);
-    }
+    const block = record(item);
+    if (block?.type === "text") out += text(block.text);
   }
   return out;
 }
 
-/** Feed OMP stdout lines to Paperclip's live run status so the UI names the running tool. */
-export function createOmpProgressReporter(sink: ProgressSink | undefined): (line: string) => Promise<void> {
-  if (!sink) return async () => {};
+function argumentHint(args: unknown): string {
+  const values = record(args);
+  if (!values) return "";
+  const display = record(values.display);
+  const candidate = text(display?.name)
+    || text(values.i)
+    || text(values.cmd)
+    || text(values.command)
+    || text(values.path)
+    || text(values.file_path)
+    || text(values.pattern)
+    || text(values.query);
+  const hint = collapse(candidate);
+  return hint.length > HINT_CHARS ? `${hint.slice(0, HINT_CHARS)}…` : hint;
+}
+
+function seconds(elapsedMs: number): string {
+  return `${(elapsedMs / 1000).toFixed(1)}s`;
+}
+
+/** Feed OMP stdout lines to Paperclip's live status and durable run events. */
+export function createOmpProgressReporter(
+  sink: ProgressSink | undefined,
+  events: EventSink | undefined,
+): (line: string) => Promise<void> {
+  if (!sink && !events) return async () => {};
 
   let lastEmitMs = 0;
   let currentToolName: string | null = null;
   let lastAssistantSnippet: string | null = null;
   let streamedText = "";
   let streamedThinking = "";
+  let toolEventCount = 0;
+  const pendingTools = new Map<string, { toolName: string; hint: string; startedMs: number }>();
 
   const emit = async (message: string, force: boolean): Promise<void> => {
+    if (!sink) return;
     const now = Date.now();
     if (!force && now - lastEmitMs < PROGRESS_MIN_INTERVAL_MS) return;
     lastEmitMs = now;
@@ -55,6 +92,25 @@ export function createOmpProgressReporter(sink: ProgressSink | undefined): (line
     }
   };
 
+  const publish = async (eventType: string, message: string, failed: boolean): Promise<void> => {
+    if (!events) return;
+    try {
+      await events({ eventType, stream: "system", level: failed ? "error" : "info", message });
+    } catch {
+      toolEventCount = MAX_TOOL_EVENTS;
+    }
+  };
+
+  const publishTool = async (message: string, failed: boolean): Promise<void> => {
+    if (toolEventCount > MAX_TOOL_EVENTS) return;
+    toolEventCount += 1;
+    if (toolEventCount > MAX_TOOL_EVENTS) {
+      await publish("omp.tool", `Tool event limit reached after ${MAX_TOOL_EVENTS} calls; later calls stay in the run log.`, false);
+      return;
+    }
+    await publish("omp.tool", message, failed);
+  };
+
   return async (line: string): Promise<void> => {
     const event = parseOmpJsonLine(line.trim());
     if (!event) return;
@@ -63,30 +119,42 @@ export function createOmpProgressReporter(sink: ProgressSink | undefined): (line
       case "tool_execution_start": {
         const toolName = text(event.toolName).trim();
         if (!toolName) return;
+        const toolCallId = text(event.toolCallId).trim();
+        const hint = argumentHint(event.args);
+        if (toolCallId) pendingTools.set(toolCallId, { toolName, hint, startedMs: Date.now() });
         currentToolName = toolName;
         streamedText = "";
         await emit(`Running ${toolName}`, true);
         return;
       }
       case "tool_execution_end": {
-        const toolName = text(event.toolName).trim() || currentToolName;
+        const toolCallId = text(event.toolCallId).trim();
+        const started = toolCallId ? pendingTools.get(toolCallId) : undefined;
+        if (toolCallId) pendingTools.delete(toolCallId);
+        const toolName = text(event.toolName).trim() || started?.toolName || currentToolName || "tool";
+        const failed = event.isError === true;
+        const hint = started?.hint ?? argumentHint(event.args);
+        const duration = started ? ` in ${seconds(Date.now() - started.startedMs)}` : "";
         currentToolName = null;
-        await emit(toolName ? `Finished ${toolName}` : "Processing model output", true);
+        await emit(`Finished ${toolName}`, true);
+        await publishTool(
+          `${toolName} ${failed ? "failed" : "ok"}${duration}${hint ? ` — ${hint}` : ""}`,
+          failed,
+        );
         return;
       }
       case "message_update": {
-        const update = event.assistantMessageEvent;
-        if (update === null || typeof update !== "object" || Array.isArray(update)) return;
-        const inner = update as Record<string, unknown>;
-        const delta = text(inner.delta);
+        const update = record(event.assistantMessageEvent);
+        if (!update) return;
+        const delta = text(update.delta);
         if (!delta) return;
-        if (text(inner.type) === "text_delta") {
+        if (text(update.type) === "text_delta") {
           streamedText = snippetOf(streamedText + delta);
           lastAssistantSnippet = streamedText;
           await emit("Writing response", false);
           return;
         }
-        if (text(inner.type) === "thinking_delta") {
+        if (text(update.type) === "thinking_delta") {
           streamedThinking = snippetOf(streamedThinking + delta);
           lastAssistantSnippet = `Thinking: ${streamedThinking}`;
           await emit("Thinking", false);
@@ -95,11 +163,9 @@ export function createOmpProgressReporter(sink: ProgressSink | undefined): (line
       }
       case "message_end":
       case "turn_end": {
-        const message = event.message;
-        if (message === null || typeof message !== "object" || Array.isArray(message)) return;
-        const record = message as Record<string, unknown>;
-        if (record.role !== "assistant") return;
-        const body = snippetOf(assistantText(record.content));
+        const message = record(event.message);
+        if (!message || message.role !== "assistant") return;
+        const body = snippetOf(assistantText(message.content));
         if (!body) return;
         streamedText = body;
         streamedThinking = "";

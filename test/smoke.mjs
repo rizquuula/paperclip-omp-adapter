@@ -417,6 +417,7 @@ assert.ok(!defaultArgs.includes("--auto-approve"), "--auto-approve must no longe
 
 // Regression test 9: OMP stream drives Paperclip's live run status
 const progressEvents = [];
+const runEvents = [];
 const progressRunId = "00000000-0000-4000-8000-000000000017";
 await adapter.execute({
   runId: progressRunId,
@@ -427,6 +428,7 @@ await adapter.execute({
   onLog: async () => {},
   onMeta: async () => {},
   onRuntimeProgress: async (update) => { progressEvents.push(update); },
+  onEvent: async (event) => { runEvents.push(event); },
 });
 const toolProgress = progressEvents.find((update) => update.currentToolName === "bash");
 assert.ok(toolProgress, "a tool_execution_start must report currentToolName");
@@ -434,6 +436,13 @@ assert.equal(toolProgress.message, "Running bash");
 const snippetProgress = progressEvents.filter((update) => update.lastAssistantSnippet).at(-1);
 assert.ok(snippetProgress, "assistant output must report a snippet");
 assert.match(snippetProgress.lastAssistantSnippet, /PROGRESS_OK/);
+
+// Regression test 10: completed tool calls become durable Paperclip run events
+const toolEvent = runEvents.find((event) => event.eventType === "omp.tool");
+assert.ok(toolEvent, "a finished tool call must publish an omp.tool run event");
+assert.equal(toolEvent.stream, "system");
+assert.equal(toolEvent.level, "info");
+assert.match(toolEvent.message, /^bash ok in \d+\.\ds \u2014 true$/);
 
 await fs.rm(root, { recursive: true, force: true });
 console.log("adapter smoke passed");
