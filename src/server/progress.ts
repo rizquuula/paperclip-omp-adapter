@@ -105,7 +105,7 @@ export function createOmpProgressReporter(
     try {
       await events({ eventType, stream: "system", level: failed ? "error" : "info", message });
     } catch {
-      toolEventCount = MAX_TOOL_EVENTS;
+      toolEventCount = MAX_TOOL_EVENTS + 1;
     }
   };
 

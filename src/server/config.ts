@@ -132,7 +132,7 @@ function envPathList(value: string | undefined): string[] {
   return text.split(text.includes("\n") ? /\r?\n/ : path.delimiter).map((item) => item.trim()).filter(Boolean);
 }
 
-function detectionEnv(): Record<string, string> {
+export function detectionEnv(): Record<string, string> {
   const profileSelection = resolveOmpProfile({});
   const agentDir = firstString(process.env.PAPERCLIP_OMP_AGENT_DIR);
   const configFiles = envPathList(process.env.PAPERCLIP_OMP_CONFIG_FILES);

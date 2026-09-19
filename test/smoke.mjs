@@ -153,7 +153,11 @@ for (const baseUrl of [
 
 const fakeOmp = path.join(root, "fake-omp.mjs");
 await fs.writeFile(fakeOmp, `#!/usr/bin/env node
+import nodeFs from "node:fs";
 const args = process.argv.slice(2);
+if (process.env.FAKE_OMP_ARGV_LOG) {
+  nodeFs.appendFileSync(process.env.FAKE_OMP_ARGV_LOG, args.join(" ") + "\\n");
+}
 if (args[0] === "models") {
   console.log(JSON.stringify({ models: [{ provider: "fake-provider", id: "fake-model", selector: "fake-provider/fake-model", name: "Fake model" }] }));
   process.exit(0);
@@ -536,6 +540,30 @@ try {
   if (previousQuotaCommand === undefined) delete process.env.PAPERCLIP_OMP_COMMAND;
   else process.env.PAPERCLIP_OMP_COMMAND = previousQuotaCommand;
 }
+
+// Regression test 16: the quota probe never spawns a second OMP process
+const argvLog = path.join(root, "fake-omp-argv.log");
+const previousArgvLog = process.env.FAKE_OMP_ARGV_LOG;
+process.env.FAKE_OMP_ARGV_LOG = argvLog;
+const previousQuotaCommand2 = process.env.PAPERCLIP_OMP_COMMAND;
+process.env.PAPERCLIP_OMP_COMMAND = fakeOmp;
+try {
+  const started = Date.now();
+  const quota = await getOmpQuotaWindows();
+  assert.equal(quota.ok, true, quota.error ?? "quota probe failed");
+  assert.ok(Date.now() - started < 20000, "quota probe must settle inside Paperclip's 20s budget");
+  const invocations = (await fs.readFile(argvLog, "utf8")).split("\n").filter(Boolean);
+  assert.deepEqual(invocations, ["usage --json"], `quota probe spawned: ${invocations.join(" | ")}`);
+} finally {
+  if (previousQuotaCommand2 === undefined) delete process.env.PAPERCLIP_OMP_COMMAND;
+  else process.env.PAPERCLIP_OMP_COMMAND = previousQuotaCommand2;
+  if (previousArgvLog === undefined) delete process.env.FAKE_OMP_ARGV_LOG;
+  else process.env.FAKE_OMP_ARGV_LOG = previousArgvLog;
+}
+
+// Regression test 17: a successful run never claims interruption evidence
+assert.equal(fresh.executionRecovery, undefined);
+assert.equal(fresh.resultJson.executionCancellation, undefined);
 
 await fs.rm(root, { recursive: true, force: true });
 console.log("adapter smoke passed");

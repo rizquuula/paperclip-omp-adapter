@@ -86,6 +86,7 @@ type ProcessAttempt = {
   parsed: ParsedOmpOutput;
   pendingToolCount: number;
   sawProviderWork: boolean;
+  reporterFailed: boolean;
 };
 
 function stringList(value: unknown, commaSeparated = false): string[] {
@@ -683,6 +684,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       }
 
       let stdoutBuffer = "";
+      let reporterFailed = false;
       let logQueue = Promise.resolve();
       const queueLog = (stream: "stdout" | "stderr", chunk: string): Promise<void> => {
         logQueue = logQueue.then(() => onLog(stream, chunk)).catch(() => {});
@@ -700,7 +702,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           const completeLine = stdoutBuffer.slice(0, newline + 1);
           stdoutBuffer = stdoutBuffer.slice(newline + 1);
           await queueLog("stdout", completeLine);
-          await reporter.ingest(completeLine);
+          try {
+            await reporter.ingest(completeLine);
+          } catch {
+            reporterFailed = true;
+          }
           newline = stdoutBuffer.indexOf("\n");
         }
       };
@@ -765,6 +771,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         parsed: parseOmpJsonl(proc.stdout),
         pendingToolCount: reporter.pendingToolCount(),
         sawProviderWork: reporter.sawProviderWork(),
+        reporterFailed,
       };
     };
 
@@ -802,7 +809,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
             signal: attempt.proc.signal,
           })
         : { errorCode: null, errorFamily: null, retryNotBefore: null };
-      const cancelled = ctx.signal?.aborted === true;
+      const cancelled = ctx.signal?.aborted === true && (failed || attempt.proc.signal !== null);
       const executionRecovery = cancelled && resolvedSessionId && attempt.pendingToolCount === 0
         ? { kind: "interrupted", providerStopped: true, sessionPreserved: true, actionOutcomes: "settled" } as const
         : !attempt.sawProviderWork && failed
@@ -843,6 +850,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           errors: attempt.parsed.errors,
           toolCalls: attempt.parsed.toolCalls,
           unknownLines: attempt.parsed.unknownLines,
+          ...(attempt.reporterFailed ? { progressReporterFailed: true } : {}),
           capabilityManifest: CAPABILITY_MANIFEST,
           ...(priorAttempt
             ? {
