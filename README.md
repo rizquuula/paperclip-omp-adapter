@@ -74,7 +74,7 @@ The adapter exposes the following configuration schema fields under an agent's a
 - `command` (string): Path to the OMP executable. Default: `omp`.
 - `model` (string): Default model selector (e.g., `anthropic/claude-3-7-sonnet`, `openai/gpt-4o`).
 - `thinking` (string): Reasoning level (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `auto`).
-- `printThoughts` (boolean): Stream thinking blocks into the Paperclip transcript (`--print-thoughts`). Default: `true`; `false` passes `--hide-thinking`.
+- `printThoughts` (boolean): Stream thinking blocks into the Paperclip transcript (`--print-thoughts`). Default: `true`; `false` passes `--hide-thinking`. Thinking only appears when the selected model actually emits reasoning deltas.
 - `profile` (string): Named OMP profile to activate (`OMP_PROFILE`).
 
 ### Workspace & Sessions

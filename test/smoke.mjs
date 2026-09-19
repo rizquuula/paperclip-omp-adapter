@@ -160,6 +160,8 @@ const noSession = args.includes("--no-session");
 const sessionId = resumeIndex >= 0 ? args[resumeIndex + 1] : "fake-session-1";
 const prompt = args.at(-1) ?? "";
 if (!noSession) console.log(JSON.stringify({ type: "session", id: sessionId }));
+console.log(JSON.stringify({ type: "tool_execution_start", toolCallId: "fake-call-1", toolName: "bash", args: { command: "true" } }));
+console.log(JSON.stringify({ type: "tool_execution_end", toolCallId: "fake-call-1", toolName: "bash", result: { content: [{ type: "text", text: "ok" }] }, isError: false }));
 const message = {
   id: "fake-message-1",
   role: "assistant",
@@ -412,6 +414,26 @@ assert.ok(defaultArgs.includes("--no-title"), "default commandArgs must include 
 assert.ok(defaultArgs.includes("--print-thoughts"), "default commandArgs must include --print-thoughts");
 assert.equal(defaultArgs[defaultArgs.indexOf("--approval-mode") + 1], "yolo");
 assert.ok(!defaultArgs.includes("--auto-approve"), "--auto-approve must no longer be emitted");
+
+// Regression test 9: OMP stream drives Paperclip's live run status
+const progressEvents = [];
+const progressRunId = "00000000-0000-4000-8000-000000000017";
+await adapter.execute({
+  runId: progressRunId,
+  agent,
+  runtime: emptyRuntime,
+  config: { command: fakeOmp, cwd: executionCwd, noSession: true, promptTemplate: "{{context.expected}}" },
+  context: { expected: "PROGRESS_OK" },
+  onLog: async () => {},
+  onMeta: async () => {},
+  onRuntimeProgress: async (update) => { progressEvents.push(update); },
+});
+const toolProgress = progressEvents.find((update) => update.currentToolName === "bash");
+assert.ok(toolProgress, "a tool_execution_start must report currentToolName");
+assert.equal(toolProgress.message, "Running bash");
+const snippetProgress = progressEvents.filter((update) => update.lastAssistantSnippet).at(-1);
+assert.ok(snippetProgress, "assistant output must report a snippet");
+assert.match(snippetProgress.lastAssistantSnippet, /PROGRESS_OK/);
 
 await fs.rm(root, { recursive: true, force: true });
 console.log("adapter smoke passed");

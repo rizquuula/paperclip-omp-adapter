@@ -104,7 +104,7 @@ function parseJsonObject(line: string): JsonObject | null {
   }
 }
 
-function parseJsonLine(line: string): JsonObject | null {
+export function parseOmpJsonLine(line: string): JsonObject | null {
   const direct = parseJsonObject(line);
   if (direct) return direct;
   const repaired = repairRedactedJsonLine(line);
@@ -173,7 +173,7 @@ export function parseOmpJsonl(stdout: string): ParsedOmpOutput {
   for (const rawLine of stdout.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line) continue;
-    const event = parseJsonLine(line);
+    const event = parseOmpJsonLine(line);
     if (!event) {
       recordUnknown(rawLine);
       continue;

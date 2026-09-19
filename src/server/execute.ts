@@ -50,6 +50,7 @@ import {
   type PreparedOmpRuntimeConfig,
 } from "./config.js";
 import { isOmpUnknownSessionError, parseOmpJsonl, type ParsedOmpOutput } from "./parse.js";
+import { createOmpProgressReporter } from "./progress.js";
 import { ensureOmpSkills } from "./skills.js";
 
 const CAPABILITY_MANIFEST = {
@@ -636,6 +637,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         logQueue = logQueue.then(() => onLog(stream, chunk)).catch(() => {});
         return logQueue;
       };
+      const reportProgress = createOmpProgressReporter(ctx.onRuntimeProgress);
       const bufferedOnLog = async (stream: "stdout" | "stderr", chunk: string): Promise<void> => {
         if (stream === "stderr") {
           await queueLog(stream, chunk);
@@ -647,6 +649,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           const completeLine = stdoutBuffer.slice(0, newline + 1);
           stdoutBuffer = stdoutBuffer.slice(newline + 1);
           await queueLog("stdout", completeLine);
+          await reportProgress(completeLine);
           newline = stdoutBuffer.indexOf("\n");
         }
       };
