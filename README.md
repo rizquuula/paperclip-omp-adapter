@@ -101,6 +101,20 @@ The adapter exposes the following configuration schema fields under an agent's a
 - `hooks` (textarea): Paths to hook files.
 - `extraArgs` (textarea): Raw additional flags passed to the OMP CLI.
 
+## Runtime behavior in Paperclip
+
+The adapter reports three channels. Every channel has a different display.
+
+| Channel | Paperclip surface | Content |
+|---|---|---|
+| `ctx.onRuntimeProgress` | Live status line | One tool name, for example `Using bash`, and the time since the last event |
+| `ctx.onEvent` (`omp.tool`) | Run event list | Tool name, argument hint, status, duration, and a short result excerpt |
+| `ctx.onLog` | Run transcript | Raw OMP JSONL, which `ui-parser.js` turns into `thinking`, `tool_call`, `tool_result`, and `assistant` entries |
+
+The status line shows one value. It cannot show a tool name and a command at the same time.
+
+The browser parses the run log with this package's `ui-parser.js`. The host serves that file at `GET /api/adapters/omp_local/ui-parser.js`.
+
 ## Development
 
 ### Building and Testing
@@ -121,6 +135,21 @@ Pack the local repository and install the tarball directly into your Paperclip i
 TARBALL=$(npm pack)
 paperclipai adapter install --payload-json "{\"packageName\":\"$PWD/$TARBALL\",\"version\":\"0.6.3\"}" --json
 ```
+
+### Deploy a New Version
+
+1. Set `package.json` and `package-lock.json` to the same version. The release preflight compares both files with the tag.
+2. Commit and push. Then push a `v<version>` tag. The Release workflow validates, publishes to npm through trusted publishing, and creates the GitHub release.
+3. Install the version in the Paperclip instance and restart it:
+
+```bash
+paperclipai adapter reinstall omp_local --json
+paperclipai service restart
+```
+
+The restart is required. `paperclipai adapter reload` re-imports the entry module only. Statically imported submodules stay cached, so a running process keeps the old code.
+
+The publish step uses npm trusted publishing, so the workflow reads no token secret. Configure the trusted publisher on the npm package page: Settings → Trusted publishing → GitHub Actions, owner `rizquuula`, repository `paperclip-omp-adapter`, workflow `release.yml`.
 
 ## License
 
