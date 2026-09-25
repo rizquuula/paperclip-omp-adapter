@@ -34,8 +34,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
           cache: npm
+
+      - name: Report npm auth source
+        run: |
+          echo "registry: $(npm config get registry)"
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "auth: static token present"
+          else
+            echo "auth: no token, npm publishes through OIDC"
+          fi
 
       - name: Preflight tag and package versions
         id: preflight
