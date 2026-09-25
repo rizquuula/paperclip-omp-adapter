@@ -695,5 +695,34 @@ assert.equal(
   "no omp.tool event may follow the cap notice",
 );
 
+// Regression test 20: the live status message carries reasoning and answer text
+const statusUpdates = [];
+const statusSink = async (update) => { statusUpdates.push(update); };
+const thinkingReporter = createOmpProgressReporter(statusSink, undefined);
+await thinkingReporter.ingest(JSON.stringify({
+  type: "message_update",
+  assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "checking the landing page spacing" },
+}));
+assert.match(statusUpdates.at(-1).message, /^Thinking: checking the landing page spacing$/);
+assert.match(statusUpdates.at(-1).lastAssistantSnippet, /^Thinking: checking the landing page spacing$/);
+
+const writingUpdates = [];
+const writingReporter = createOmpProgressReporter(async (update) => { writingUpdates.push(update); }, undefined);
+await writingReporter.ingest(JSON.stringify({
+  type: "message_update",
+  assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "I will fix the rail width." },
+}));
+assert.match(writingUpdates.at(-1).message, /^Writing: I will fix the rail width\.$/);
+
+const longUpdates = [];
+const longStatusReporter = createOmpProgressReporter(async (update) => { longUpdates.push(update); }, undefined);
+await longStatusReporter.ingest(JSON.stringify({
+  type: "message_update",
+  assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "y".repeat(400) },
+}));
+const longMessage = longUpdates.at(-1).message;
+assert.ok(longMessage.length <= "Thinking: ".length + 150, "status message must stay inside Paperclip's 180 character limit");
+assert.match(longMessage, /y{150}$/);
+
 await fs.rm(root, { recursive: true, force: true });
 console.log("adapter smoke passed");

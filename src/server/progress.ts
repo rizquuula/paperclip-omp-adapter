@@ -8,6 +8,8 @@ const PROGRESS_MIN_INTERVAL_MS = 1000;
 const SNIPPET_CHARS = 200;
 const RESULT_EXCERPT_CHARS = 200;
 const HINT_CHARS = 120;
+/** Paperclip truncates a runtime status message at 180 characters. */
+const MESSAGE_CHARS = 150;
 const MAX_TOOL_EVENTS = 400;
 
 function text(value: unknown): string {
@@ -238,13 +240,15 @@ export function createOmpProgressReporter(
         if (text(update.type) === "text_delta") {
           streamedText = snippetOf(streamedText + delta);
           lastAssistantSnippet = streamedText;
-          await emit("Writing response", false);
+          const shown = streamedText.length > MESSAGE_CHARS ? streamedText.slice(-MESSAGE_CHARS) : streamedText;
+          await emit(`Writing: ${shown}`, false);
           return;
         }
         if (text(update.type) === "thinking_delta") {
           streamedThinking = snippetOf(streamedThinking + delta);
           lastAssistantSnippet = `Thinking: ${streamedThinking}`;
-          await emit("Thinking", false);
+          const shown = streamedThinking.length > MESSAGE_CHARS ? streamedThinking.slice(-MESSAGE_CHARS) : streamedThinking;
+          await emit(`Thinking: ${shown}`, false);
         }
         return;
       }

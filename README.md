@@ -149,7 +149,15 @@ paperclipai service restart
 
 The restart is required. `paperclipai adapter reload` re-imports the entry module only. Statically imported submodules stay cached, so a running process keeps the old code.
 
-The publish step uses npm trusted publishing, so the workflow reads no token secret. Configure the trusted publisher on the npm package page: Settings → Trusted publishing → GitHub Actions, owner `rizquuula`, repository `paperclip-omp-adapter`, workflow `release.yml`.
+The publish step authenticates with the `NPM_TOKEN` repository secret. The workflow keeps `id-token: write`, so npm still records a provenance attestation for the GitHub OIDC identity.
+
+Set or rotate the secret with:
+
+```bash
+gh secret set NPM_TOKEN -R rizquuula/paperclip-omp-adapter
+```
+
+Trusted publishing, which removes the secret, needs a matching entry on the npm package page: Settings → Trusted publishing → GitHub Actions, owner `rizquuula`, repository `paperclip-omp-adapter`, workflow `release.yml`, environment empty. The registry answers `OIDC token exchange error - package not found` until that entry matches.
 
 ## License
 
