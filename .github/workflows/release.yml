@@ -83,11 +83,11 @@ jobs:
             echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # Trusted publishing: npm exchanges this workflow's OIDC token for publish
+      # rights, so no long-lived NPM_TOKEN secret is required.
       - name: Publish to npm
         if: steps.npm-state.outputs.publish == 'true'
         run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish GitHub Release
         env:
