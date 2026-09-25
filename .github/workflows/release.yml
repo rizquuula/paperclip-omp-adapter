@@ -34,7 +34,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
+          registry-url: https://registry.npmjs.org
           cache: npm
+
+      # Trusted publishing needs npm 11.5.1 or newer.
+      - name: Upgrade npm for trusted publishing
+        run: |
+          npm install -g npm@latest
+          node --version
+          npm --version
 
       - name: Report npm auth source
         run: |
