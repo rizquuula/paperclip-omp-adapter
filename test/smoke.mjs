@@ -12,6 +12,7 @@ import {
 } from "../dist/server/execute.js";
 import { classifyOmpFailure } from "../dist/server/failure.js";
 import { parseOmpJsonl } from "../dist/server/parse.js";
+import { createOmpProgressReporter } from "../dist/server/progress.js";
 import { getOmpQuotaWindows } from "../dist/server/quota.js";
 import { resolveOmpProfile } from "../dist/server/profile.js";
 
@@ -451,9 +452,16 @@ assert.equal(toolProgress.message, "Running bash");
 const snippetProgress = progressEvents.filter((update) => update.lastAssistantSnippet).at(-1);
 assert.ok(snippetProgress, "assistant output must report a snippet");
 assert.match(snippetProgress.lastAssistantSnippet, /PROGRESS_OK/);
+const toolStartEvent = runEvents.find(
+  (event) => event.eventType === "omp.tool" && event.payload?.phase === "start",
+);
+assert.ok(toolStartEvent, "a started tool call must publish an omp.tool start event");
+assert.equal(toolStartEvent.payload.toolName, "bash");
 
 // Regression test 10: completed tool calls become durable Paperclip run events
-const toolEvent = runEvents.find((event) => event.eventType === "omp.tool");
+const toolEvent = runEvents.find(
+  (event) => event.eventType === "omp.tool" && event.payload?.phase === "end",
+);
 assert.ok(toolEvent, "a finished tool call must publish an omp.tool run event");
 assert.equal(toolEvent.stream, "system");
 assert.equal(toolEvent.level, "info");
@@ -564,6 +572,128 @@ try {
 // Regression test 17: a successful run never claims interruption evidence
 assert.equal(fresh.executionRecovery, undefined);
 assert.equal(fresh.resultJson.executionCancellation, undefined);
+
+// Regression test 18: durable tool events carry the tool name and per-tool detail
+const detailEvents = [];
+const detailReporter = createOmpProgressReporter(undefined, async (event) => { detailEvents.push(event); });
+await detailReporter.ingest(JSON.stringify({
+  type: "tool_execution_start",
+  toolCallId: "c1",
+  toolName: "bash",
+  args: { command: "true" },
+}));
+await detailReporter.ingest(JSON.stringify({
+  type: "tool_execution_end",
+  toolCallId: "c1",
+  toolName: "bash",
+  result: { content: [{ type: "text", text: "ok" }] },
+  isError: false,
+}));
+assert.equal(detailEvents.length, 2);
+const [detailStart, detailEnd] = detailEvents;
+assert.equal(detailStart.eventType, "omp.tool");
+assert.deepEqual(detailStart.payload, { phase: "start", toolName: "bash", toolCallId: "c1", hint: "true" });
+assert.equal(detailEnd.eventType, "omp.tool");
+assert.equal(detailEnd.payload.phase, "end");
+assert.equal(detailEnd.payload.toolName, "bash");
+assert.equal(detailEnd.payload.ok, true);
+assert.equal(typeof detailEnd.payload.durationMs, "number");
+assert.equal(detailEnd.payload.hint, "true");
+assert.equal(detailEnd.payload.resultExcerpt, "ok");
+assert.equal(detailEnd.level, "info");
+
+const failedEvents = [];
+const failedReporter = createOmpProgressReporter(undefined, async (event) => { failedEvents.push(event); });
+await failedReporter.ingest(JSON.stringify({
+  type: "tool_execution_start",
+  toolCallId: "c2",
+  toolName: "bash",
+  args: { command: "false" },
+}));
+await failedReporter.ingest(JSON.stringify({
+  type: "tool_execution_end",
+  toolCallId: "c2",
+  toolName: "bash",
+  result: { content: [{ type: "text", text: "boom" }] },
+  isError: true,
+}));
+const failedEnd = failedEvents.at(-1);
+assert.equal(failedEnd.payload.ok, false);
+assert.equal(failedEnd.level, "error");
+
+const emptyEvents = [];
+const emptyReporter = createOmpProgressReporter(undefined, async (event) => { emptyEvents.push(event); });
+await emptyReporter.ingest(JSON.stringify({
+  type: "tool_execution_start",
+  toolCallId: "c4",
+  toolName: "bash",
+  args: { command: "true" },
+}));
+await emptyReporter.ingest(JSON.stringify({
+  type: "tool_execution_end",
+  toolCallId: "c4",
+  toolName: "bash",
+  result: null,
+  isError: false,
+}));
+assert.equal(
+  Object.hasOwn(emptyEvents.at(-1).payload, "resultExcerpt"),
+  false,
+  "a null tool result must not produce an excerpt",
+);
+
+const longEvents = [];
+const longReporter = createOmpProgressReporter(undefined, async (event) => { longEvents.push(event); });
+const longText = `${"line1\n".repeat(200)}tail`;
+await longReporter.ingest(JSON.stringify({
+  type: "tool_execution_start",
+  toolCallId: "c3",
+  toolName: "bash",
+  args: { command: "true" },
+}));
+await longReporter.ingest(JSON.stringify({
+  type: "tool_execution_end",
+  toolCallId: "c3",
+  toolName: "bash",
+  result: { content: [{ type: "text", text: longText }] },
+  isError: false,
+}));
+const longExcerpt = longEvents.at(-1).payload.resultExcerpt;
+assert.ok(longExcerpt.length <= 200, "the result excerpt must stay bounded");
+assert.doesNotMatch(longExcerpt, /\n/);
+assert.match(longExcerpt, /^line1 line1/);
+
+// Regression test 19: tool events are capped and the cap notice is not a tool event
+const cappedEvents = [];
+const cappedReporter = createOmpProgressReporter(undefined, async (event) => { cappedEvents.push(event); });
+for (let index = 0; index < 201; index += 1) {
+  const toolCallId = `cap-${index}`;
+  await cappedReporter.ingest(JSON.stringify({
+    type: "tool_execution_start",
+    toolCallId,
+    toolName: "read",
+    args: {},
+  }));
+  await cappedReporter.ingest(JSON.stringify({
+    type: "tool_execution_end",
+    toolCallId,
+    toolName: "read",
+    result: { content: [{ type: "text", text: "ok" }] },
+    isError: false,
+  }));
+}
+const cappedToolEvents = cappedEvents.filter((event) => event.eventType === "omp.tool");
+assert.ok(cappedToolEvents.length <= 400, `expected at most 400 omp.tool events, got ${cappedToolEvents.length}`);
+const capNotice = cappedEvents.find((event) => event.eventType === "omp.progress");
+assert.ok(capNotice, "the tool event cap must publish an omp.progress notice");
+assert.equal(capNotice.stream, "system");
+assert.equal(capNotice.level, "info");
+assert.match(capNotice.message, /limit reached after 400 calls/);
+assert.equal(
+  cappedEvents.slice(cappedEvents.indexOf(capNotice) + 1).some((event) => event.eventType === "omp.tool"),
+  false,
+  "no omp.tool event may follow the cap notice",
+);
 
 await fs.rm(root, { recursive: true, force: true });
 console.log("adapter smoke passed");

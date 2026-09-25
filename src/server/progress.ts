@@ -6,8 +6,9 @@ type EventSink = NonNullable<AdapterExecutionContext["onEvent"]>;
 
 const PROGRESS_MIN_INTERVAL_MS = 1000;
 const SNIPPET_CHARS = 200;
+const RESULT_EXCERPT_CHARS = 200;
 const HINT_CHARS = 120;
-const MAX_TOOL_EVENTS = 200;
+const MAX_TOOL_EVENTS = 400;
 
 function text(value: unknown): string {
   return typeof value === "string" ? value : "";
@@ -39,6 +40,32 @@ function assistantText(content: unknown): string {
   return out;
 }
 
+/** Head of a tool result's text, whitespace-collapsed and bounded for the run timeline. */
+function toolResultExcerpt(result: unknown): string {
+  if (result === null || result === undefined) return "";
+  let raw: string;
+  if (typeof result === "string") {
+    raw = result;
+  } else {
+    const content = record(result)?.content;
+    if (typeof content === "string") {
+      raw = content;
+    } else if (Array.isArray(content)) {
+      raw = assistantText(content);
+    } else {
+      try {
+        raw = JSON.stringify(result) ?? "";
+      } catch {
+        raw = "";
+      }
+    }
+  }
+  const normalized = collapse(raw);
+  return normalized.length > RESULT_EXCERPT_CHARS
+    ? normalized.slice(0, RESULT_EXCERPT_CHARS)
+    : normalized;
+}
+
 function argumentHint(args: unknown): string {
   const values = record(args);
   if (!values) return "";
@@ -57,6 +84,30 @@ function argumentHint(args: unknown): string {
 
 function seconds(elapsedMs: number): string {
   return `${(elapsedMs / 1000).toFixed(1)}s`;
+}
+
+interface ToolEventDetail {
+  ok: boolean;
+  durationMs: number;
+  resultExcerpt: string;
+}
+
+/** Flat payload Paperclip reads to name the tool and describe the call in the run timeline. */
+function toolEventPayload(
+  phase: "start" | "end",
+  toolName: string,
+  toolCallId: string,
+  hint: string,
+  detail: ToolEventDetail | null,
+): Record<string, unknown> {
+  return {
+    phase,
+    toolName,
+    ...(toolCallId ? { toolCallId } : {}),
+    ...(detail ? { ok: detail.ok, durationMs: detail.durationMs } : {}),
+    ...(hint ? { hint } : {}),
+    ...(detail?.resultExcerpt ? { resultExcerpt: detail.resultExcerpt } : {}),
+  };
 }
 
 export interface OmpStreamReporter {
@@ -100,23 +151,38 @@ export function createOmpProgressReporter(
     }
   };
 
-  const publish = async (eventType: string, message: string, failed: boolean): Promise<void> => {
+  const publish = async (
+    eventType: string,
+    message: string,
+    failed: boolean,
+    payload?: Record<string, unknown>,
+  ): Promise<void> => {
     if (!events) return;
     try {
-      await events({ eventType, stream: "system", level: failed ? "error" : "info", message });
+      await events({
+        eventType,
+        stream: "system",
+        level: failed ? "error" : "info",
+        message,
+        ...(payload ? { payload } : {}),
+      });
     } catch {
       toolEventCount = MAX_TOOL_EVENTS + 1;
     }
   };
 
-  const publishTool = async (message: string, failed: boolean): Promise<void> => {
+  const publishTool = async (
+    message: string,
+    failed: boolean,
+    payload?: Record<string, unknown>,
+  ): Promise<void> => {
     if (toolEventCount > MAX_TOOL_EVENTS) return;
     toolEventCount += 1;
     if (toolEventCount > MAX_TOOL_EVENTS) {
-      await publish("omp.tool", `Tool event limit reached after ${MAX_TOOL_EVENTS} calls; later calls stay in the run log.`, false);
+      await publish("omp.progress", `Tool event limit reached after ${MAX_TOOL_EVENTS} calls; later calls stay in the run log.`, false);
       return;
     }
-    await publish("omp.tool", message, failed);
+    await publish("omp.tool", message, failed, payload);
   };
 
   const ingest = async (line: string): Promise<void> => {
@@ -134,6 +200,11 @@ export function createOmpProgressReporter(
         providerWorkSeen = true;
         streamedText = "";
         await emit(`Running ${toolName}`, true);
+        await publishTool(
+          `${toolName} started${hint ? ` — ${hint}` : ""}`,
+          false,
+          toolEventPayload("start", toolName, toolCallId, hint, null),
+        );
         return;
       }
       case "tool_execution_end": {
@@ -143,12 +214,18 @@ export function createOmpProgressReporter(
         const toolName = text(event.toolName).trim() || started?.toolName || currentToolName || "tool";
         const failed = event.isError === true;
         const hint = started?.hint ?? argumentHint(event.args);
-        const duration = started ? ` in ${seconds(Date.now() - started.startedMs)}` : "";
+        const durationMs = started ? Date.now() - started.startedMs : 0;
+        const duration = started ? ` in ${seconds(durationMs)}` : "";
         currentToolName = null;
         await emit(`Finished ${toolName}`, true);
         await publishTool(
           `${toolName} ${failed ? "failed" : "ok"}${duration}${hint ? ` — ${hint}` : ""}`,
           failed,
+          toolEventPayload("end", toolName, toolCallId, hint, {
+            ok: !failed,
+            durationMs,
+            resultExcerpt: toolResultExcerpt(event.result),
+          }),
         );
         return;
       }
