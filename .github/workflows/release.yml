@@ -31,15 +31,13 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 24
-          cache: npm
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
 
-      # Trusted publishing needs npm 11.5.1 or newer. setup-node is used
-      # without registry-url on purpose: that option writes an .npmrc with an
-      # _authToken placeholder and exports a dummy NODE_AUTH_TOKEN, which makes
-      # npm publish with a static token instead of the workflow OIDC identity.
+      # Trusted publishing needs npm 11.5.1 or newer.
       - name: Upgrade npm for trusted publishing
         run: |
           npm install -g npm@latest
@@ -55,6 +53,7 @@ jobs:
           else
             echo "auth: no token, npm publishes through OIDC"
           fi
+          echo "oidc url: $([ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && echo present || echo missing)"
 
       - name: Preflight tag and package versions
         id: preflight
@@ -106,6 +105,8 @@ jobs:
       # rights, so no long-lived NPM_TOKEN secret is required.
       - name: Publish to npm
         if: steps.npm-state.outputs.publish == 'true'
+        env:
+          NPM_CONFIG_LOGLEVEL: verbose
         run: npm publish --access public --provenance
 
       - name: Publish GitHub Release
