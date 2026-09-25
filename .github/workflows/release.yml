@@ -34,10 +34,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
           cache: npm
 
-      # Trusted publishing needs npm 11.5.1 or newer.
+      # Trusted publishing needs npm 11.5.1 or newer. setup-node is used
+      # without registry-url on purpose: that option writes an .npmrc with an
+      # _authToken placeholder and exports a dummy NODE_AUTH_TOKEN, which makes
+      # npm publish with a static token instead of the workflow OIDC identity.
       - name: Upgrade npm for trusted publishing
         run: |
           npm install -g npm@latest
@@ -47,6 +49,7 @@ jobs:
       - name: Report npm auth source
         run: |
           echo "registry: $(npm config get registry)"
+          echo "npm: $(npm --version)"
           if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
             echo "auth: static token present"
           else
